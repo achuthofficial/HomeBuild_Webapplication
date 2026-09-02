@@ -159,11 +159,3 @@ recorded so the choice is visible rather than silently baked in:
 6. **Support** — linked from every screen but never mocked up; a plain
    placeholder page keeps the link from dead-ending.
 
----
-
-## Notes
-
-This is a UI prototype. There is no persistence beyond a single
-`sessionStorage` flag for the demo session, and no request leaves the browser.
-The database schema this UI is modelled against lives at
-`POTIIP/db/homebuild_schema.sql`.
