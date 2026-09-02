@@ -1,0 +1,144 @@
+@import 'tailwindcss';
+
+/* ==========================================================================
+   HOMEBUILD DESIGN TOKENS
+   Every value sampled pixel-by-pixel from design/screenshots in the POTIIP
+   repo. See POTIIP/design/design_system.md for the full derivation.
+   ========================================================================== */
+@theme {
+  /* --- Brand / action ---------------------------------------------------- */
+  --color-brand-50: #f2f6fb;
+  --color-brand-100: #dee9f5;
+  --color-brand-200: #80abde;
+  --color-brand-400: #4082ce;
+  --color-brand-600: #0058be;
+  --color-brand-700: #00478f;
+
+  /* --- Semantic ---------------------------------------------------------- */
+  --color-success: #10b981;
+  --color-success-bg: #e7f8f2;
+  --color-warning: #f59e0b;
+  --color-warning-bg: #fef6e7;
+  --color-warning-bg-strong: #fdecce;
+  --color-danger: #ba1a1a;
+  --color-danger-bar: #c84848;
+  --color-danger-bg: #ffdad6;
+  --color-violet: #8b5cf6;
+  --color-violet-bar: #7d53dd;
+  --color-violet-bg: #f3effe;
+  --color-info-bg: #dbeafe;
+  --color-orange-bg: #ffedd5;
+  --color-chip: #eeeff2;
+
+  /* Icon-tile tints. Sampled from the Finance and Alerts KPI cards, where
+     the glyph sits on a filled rounded square. These are LIGHTER than the
+     matching chip backgrounds, so they get their own tokens. */
+  --color-brand-tile: #d8e2ff;
+  --color-danger-tile: #fff4f3;
+  --color-warning-tile: #fef5e7;
+
+  /* --- Surfaces ---------------------------------------------------------- */
+  --color-canvas: #f7f9fb;
+  --color-surface: #ffffff;
+  --color-subtle: #f2f4f6;
+  --color-muted: #ecf0f5;
+  --color-line: #e2e8f0;
+  --color-line-strong: #d3d7dd;
+  --color-dark-surface: #2d3133;
+  --color-sys-surface: #e6e8ea;
+
+  /* --- Ink --------------------------------------------------------------- */
+  --color-ink: #0f172a;
+  --color-ink-2: #505f76;
+  --color-ink-3: #7a8597;
+  --color-ink-4: #a7afba;
+
+  /* --- Type -------------------------------------------------------------- */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    sans-serif;
+
+  /* --- Shape ------------------------------------------------------------- */
+  --radius-card: 12px;
+  --radius-btn: 8px;
+
+  /* --- Elevation --------------------------------------------------------- */
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-pop: 0 8px 24px -6px rgba(15, 23, 42, 0.12),
+    0 2px 6px -2px rgba(15, 23, 42, 0.06);
+  --shadow-raised: 0 1px 2px rgba(15, 23, 42, 0.06),
+    0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+/* Tailwind v4 defaults `border-color` to currentColor. Restore the v3
+   behaviour so a bare `border` uses the design-system hairline. */
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--color-line);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* KPI figures, currency and table amounts align down the column. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+}
+
+@layer components {
+  /* Uppercase tracked label used on KPI cards and table headers. */
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-4;
+  }
+
+  .card {
+    @apply rounded-[12px] border border-line bg-surface shadow-[var(--shadow-card)];
+  }
+
+  .focus-ring {
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-brand-200 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas;
+  }
+}
+
+/* Thin, unobtrusive scrollbars that match the neutral ramp. */
+@layer utilities {
+  .scrollbar-slim {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+  .scrollbar-slim::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+  .scrollbar-slim::-webkit-scrollbar-thumb {
+    background-color: var(--color-line-strong);
+    border-radius: 999px;
+  }
+  .scrollbar-slim::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
