@@ -18,6 +18,7 @@ import {
   activityBreakdown,
   feedFilters,
 } from '@/data/siteFeed'
+import { onImageError } from '@/lib/imageFallback'
 
 const noteRules = {
   success: 'border-success',
@@ -133,6 +134,7 @@ export default function Construction() {
                       >
                         <img
                           src={photo}
+                          onError={onImageError}
                           alt={`${entry.title} photo ${i + 1}`}
                           loading="lazy"
                           className="size-full object-cover transition-transform duration-300 hover:scale-105"
@@ -325,6 +327,7 @@ export default function Construction() {
         {lightbox ? (
           <img
             src={lightbox}
+            onError={onImageError}
             alt="Site photo, enlarged"
             className="w-full rounded-[8px] object-cover"
           />

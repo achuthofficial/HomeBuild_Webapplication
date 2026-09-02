@@ -9,6 +9,7 @@ import AvatarStack from '@/components/ui/AvatarStack'
 import { cn } from '@/lib/cn'
 import { currentUser } from '@/data/user'
 import { dashboardKpis, projectStatusRows, siteUpdates } from '@/data/dashboard'
+import { onImageError } from '@/lib/imageFallback'
 
 const rowIconTones = {
   brand: 'bg-brand-50 text-brand-ink',
@@ -135,6 +136,7 @@ export default function Dashboard() {
                 {update.photo ? (
                   <img
                     src={update.photo}
+                    onError={onImageError}
                     alt=""
                     loading="lazy"
                     className="mt-2.5 aspect-[16/9] w-full rounded-[8px] object-cover"

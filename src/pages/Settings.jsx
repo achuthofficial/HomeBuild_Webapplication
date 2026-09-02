@@ -22,6 +22,7 @@ import { useAuth } from '@/context/AuthContext'
 import { useTheme } from '@/context/ThemeContext'
 import { useToast } from '@/context/ToastContext'
 import { teamMembers } from '@/data/user'
+import { onAvatarError } from '@/lib/imageFallback'
 
 const themes = [
   { id: 'light', label: 'Light Mode', icon: Sun },
@@ -71,6 +72,7 @@ export default function SettingsPage() {
           <div className="relative mx-auto w-fit">
             <img
               src={user.avatar}
+              onError={onAvatarError}
               alt={user.name}
               className="size-[104px] rounded-full object-cover"
             />
@@ -193,6 +195,7 @@ export default function SettingsPage() {
               >
                 <img
                   src={member.avatar}
+                  onError={onAvatarError}
                   alt=""
                   className="size-9 shrink-0 rounded-full object-cover"
                 />

@@ -1,4 +1,5 @@
 import { cn } from '@/lib/cn'
+import { onAvatarError } from '@/lib/imageFallback'
 
 /**
  * Overlapping circular avatars with a 2px white ring, plus an optional "+N"
@@ -18,6 +19,7 @@ export default function AvatarStack({
         <img
           key={src + i}
           src={src}
+          onError={onAvatarError}
           alt=""
           loading="lazy"
           width={size}
