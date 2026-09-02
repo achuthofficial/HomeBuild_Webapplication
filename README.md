@@ -1,8 +1,5 @@
 # HomeBuild — Web Application
 
-A pixel-faithful React rebuild of the nine HomeBuild UI mockups, running on
-static fixture data with every control wired up. No backend, no network calls.
-
 **Stack:** React 19 · Vite 8 · Tailwind CSS 4 · React Router 7 · lucide-react
 
 ---
@@ -16,10 +13,6 @@ npm run build    # → dist/
 npm run preview  # serve the production build locally
 ```
 
-Any credentials are accepted on the sign-in screen — it fills in
-`manish@homebuild.com` by default. Press **Sign In to Workspace** to enter.
-
----
 
 ## Deploying to Vercel
 
@@ -32,29 +25,6 @@ and reads `vercel.json`, so no dashboard configuration is required:
 | Build command | `npm run build` |
 | Output directory | `dist` |
 | Install command | `npm install` |
-
-### Why deep links don't 404
-
-This is a client-routed SPA: only `/index.html` exists on disk, so a hard
-refresh on `/finance` would normally ask Vercel for a `/finance` file that isn't
-there and get the platform 404. `vercel.json` prevents that:
-
-```json
-"rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }]
-```
-
-Every path that isn't under `/api/` is served `index.html`, React Router reads
-the URL client-side, and the right page renders. Static assets are unaffected —
-Vercel matches real files in `dist/` before applying rewrites.
-
-Unknown paths are caught by the router's `path: '*'` route and render the in-app
-404 (`src/pages/NotFound.jsx`), which offers links into every module rather than
-a dead end. `RootError.jsx` is wired as the router `errorElement` so render
-errors also stay inside the product shell.
-
-**Verified routes:** `/` (redirects to `/dashboard`), `/sign-in`, `/dashboard`,
-`/projects`, `/construction`, `/finance`, `/schedule`, `/contractors`,
-`/analytics`, `/settings`, `/support`, plus `*` → in-app 404.
 
 ---
 
@@ -85,73 +55,7 @@ HomeBuild_Webapplication/
 ├── vite.config.js           @ → ./src alias
 └── jsconfig.json            editor path intellisense
 ```
-
-**Where to change things**
-
-- **Data** — `src/data/*.js`. Every number, name and string on screen lives
-  here, nothing is hardcoded in a page component.
-- **Colors / type / radii** — the `@theme` block at the top of `src/index.css`.
-  Change a token there and it propagates everywhere.
-- **Images** — `src/data/media.js` centralises every external URL (Unsplash for
-  photography, pravatar for faces) so the demo can be re-pointed in one file.
-
----
-
-## Design tokens
-
-Sampled pixel-by-pixel from the mockups; the full derivation, per-screen data
-inventory and a list of inconsistencies is in `POTIIP/design/design_system.md`.
-
-| Role | Hex |
-|---|---|
-| Primary | `#0058BE` |
-| Success | `#10B981` |
-| Warning | `#F59E0B` |
-| Danger | `#BA1A1A` (bars `#C84848`) |
-| Violet | `#8B5CF6` (Gantt bars `#7D53DD`) |
-| Canvas / surface / hairline | `#F7F9FB` / `#FFFFFF` / `#E2E8F0` |
-| Ink ramp | `#0F172A` → `#505F76` → `#7A8597` → `#A7AFBA` |
-
-Type is Inter on a 24 / 18 / 14 / 12 / 11 ladder, with uppercase letter-spaced
-11px eyebrows on KPI cards and table headers. Cards are 12px radius, buttons
-8px, chips fully rounded.
-
-> **Do not name the eyebrow class `.overline`.** `overline` is a built-in
-> Tailwind utility (`text-decoration-line: overline`) and the utility layer
-> wins, drawing a literal line above every KPI label and table header.
-> Tailwind's scanner is loose enough that even a *prop* named `overline`
-> regenerates it, so the prop is `eyebrow` too.
-
----
-
-## Theming
-
-Three modes, matching the Settings mockup: **Light**, **Dark**, **System**.
-
-- `src/context/ThemeContext.jsx` holds the user's *choice*; `system` is
-  collapsed to a concrete value by reading `prefers-color-scheme`, and stays
-  live via a `matchMedia` listener if the OS setting changes mid-session.
-- Only the **resolved** value is stamped on `<html>` as `data-theme`, so
-  `src/index.css` needs a single `:root[data-theme='dark']` block rather than
-  duplicating every token inside a media query.
-- The choice persists to `localStorage`, and an inline script in `index.html`
-  applies it **before first paint**, so there is no flash of the wrong theme.
-- Switching adds `body.theme-transition` for 260ms so colours cross-fade
-  instead of snapping, then removes it so ordinary hovers aren't slowed.
-- `color-scheme` is set on the root, so native scrollbars, form controls and
-  autofill follow the theme too.
-
-**Everything is token-driven.** Components reference `bg-surface`, `text-ink`,
-`border-line` and so on — no component holds a raw hex. SVG charts use
-`var(--color-…)` in their `fill`/`stroke` attributes for the same reason. That
-means the dark theme required no per-component overrides, only a second token
-block.
-
-Two splits exist purely to survive the inversion:
-
-| Token | Why |
-|---|---|
-| `--color-brand-ink` vs `--color-brand-600` | A fill must be dark enough for white text; a link must be light enough for a dark canvas. One value can't do both. |
+both. |
 | `--color-scrim` | Modal and drawer overlays used `ink`, which is *light* in dark mode — the scrim would have brightened the page instead of dimming it. |
 
 Photography is dimmed slightly (`brightness(.88)`) in dark mode so images don't
