@@ -6,6 +6,12 @@ import ProtectedRoute from '@/router/ProtectedRoute'
 import RootError from '@/router/RootError'
 
 import SignIn from '@/pages/SignIn'
+import SignUp from '@/pages/SignUp'
+import ForgotPassword from '@/pages/ForgotPassword'
+import ResetPassword from '@/pages/ResetPassword'
+import AuthCallback from '@/pages/AuthCallback'
+import Privacy from '@/pages/Privacy'
+
 import Dashboard from '@/pages/Dashboard'
 import Projects from '@/pages/Projects'
 import Construction from '@/pages/Construction'
@@ -18,9 +24,11 @@ import Support from '@/pages/Support'
 import NotFound from '@/pages/NotFound'
 
 /**
- * Browser router. Deep links such as /finance are rewritten to index.html by
- * vercel.json, so a hard refresh on any route resolves here rather than
- * hitting Vercel's 404 page.
+ * Browser router.
+ *
+ * Deep links such as /finance and /auth/callback are rewritten to index.html
+ * by vercel.json, so a hard refresh or an emailed link resolves here rather
+ * than hitting Vercel's 404 page.
  */
 export const router = createBrowserRouter([
   {
@@ -29,11 +37,25 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
 
+      /* ---------------------------------------------------- unauthenticated
+         AuthLayout bounces signed-in visitors out of these, except for the
+         two routes that legitimately run with a session. */
       {
         element: <AuthLayout />,
-        children: [{ path: 'sign-in', element: <SignIn /> }],
+        children: [
+          { path: 'sign-in', element: <SignIn /> },
+          { path: 'sign-up', element: <SignUp /> },
+          { path: 'forgot-password', element: <ForgotPassword /> },
+          { path: 'reset-password', element: <ResetPassword /> },
+          { path: 'auth/callback', element: <AuthCallback /> },
+        ],
       },
 
+      /* Reachable either way — the sign-in footer links here before a session
+         exists, and the sidebar links here after. */
+      { path: 'privacy', element: <Privacy /> },
+
+      /* ---------------------------------------------------------- workspace */
       {
         element: (
           <ProtectedRoute>

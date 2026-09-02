@@ -1,16 +1,31 @@
 import { avatar } from './media'
 
-/** The signed-in demo user, from the Settings mockup. */
-export const currentUser = {
-  id: 'usr-manish',
-  name: 'Manish Kumar',
-  firstName: 'Manish',
+/**
+ * Fallback profile fields for the signed-in user.
+ *
+ * Identity (id, name, email, avatar) now comes from Supabase — see
+ * AuthContext.toProfile. This supplies only the fields the prototype has no
+ * database behind: role, phone and the two counters on the Settings screen.
+ * They are placeholders, not the signed-in user's real data.
+ */
+export const demoProfile = {
   role: 'Senior Project Manager',
-  email: 'manish@homebuild.com',
   phone: '+91 64589 40458',
-  avatar: avatar(13, 240),
   activeProjects: 12,
   teamsLed: '04',
+}
+
+/**
+ * Retained for the screens that still render fixture content (the Dashboard
+ * greeting falls back to this before a session resolves).
+ */
+export const currentUser = {
+  ...demoProfile,
+  id: 'usr-demo',
+  name: 'Manish Kumar',
+  firstName: 'Manish',
+  email: 'manish@homebuild.com',
+  avatar: avatar(13, 240),
 }
 
 /** Team Management rows on the Settings screen. */

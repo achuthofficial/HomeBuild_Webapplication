@@ -13,11 +13,11 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import Button from '@/components/ui/Button'
+import Avatar from '@/components/ui/Avatar'
 import { searchPlaceholders } from '@/data/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { useTheme } from '@/context/ThemeContext'
-import { onAvatarError } from '@/lib/imageFallback'
 
 export default function Topbar({ onMenuClick, onCreateProject }) {
   const { pathname } = useLocation()
@@ -122,12 +122,7 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
               menuOpen && 'ring-brand-200',
             )}
           >
-            <img
-              src={user.avatar}
-              onError={onAvatarError}
-              alt={user.name}
-              className="size-8 rounded-full object-cover"
-            />
+            <Avatar user={user} size={32} />
           </button>
 
           {menuOpen ? (
@@ -173,9 +168,9 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
               <button
                 type="button"
                 role="menuitem"
-                onClick={() => {
+                onClick={async () => {
                   setMenuOpen(false)
-                  signOut()
+                  await signOut()
                   navigate('/sign-in', { replace: true })
                 }}
                 className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] text-danger transition-colors hover:bg-danger-bg/50"

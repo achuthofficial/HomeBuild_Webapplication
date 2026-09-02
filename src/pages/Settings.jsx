@@ -15,6 +15,7 @@ import {
 
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
+import Avatar from '@/components/ui/Avatar'
 import Chip from '@/components/ui/Chip'
 import Modal from '@/components/ui/Modal'
 import { cn } from '@/lib/cn'
@@ -70,12 +71,7 @@ export default function SettingsPage() {
       <div className="space-y-4">
         <Card className="p-6 text-center">
           <div className="relative mx-auto w-fit">
-            <img
-              src={user.avatar}
-              onError={onAvatarError}
-              alt={user.name}
-              className="size-[104px] rounded-full object-cover"
-            />
+            <Avatar user={user} size={104} />
             <button
               type="button"
               onClick={() =>
@@ -109,8 +105,8 @@ export default function SettingsPage() {
           <Button
             variant="danger"
             className="mt-2 w-full"
-            onClick={() => {
-              signOut()
+            onClick={async () => {
+              await signOut()
               navigate('/sign-in', { replace: true })
             }}
           >
