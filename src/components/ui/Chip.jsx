@@ -10,9 +10,9 @@ const tones = {
   warning: 'bg-warning-bg text-warning',
   danger: 'bg-danger-bg text-danger',
   violet: 'bg-violet-bg text-violet',
-  info: 'bg-info-bg text-brand-600',
-  orange: 'bg-orange-bg text-[#C2410C]',
-  brand: 'bg-brand-50 text-brand-600',
+  info: 'bg-info-bg text-brand-ink',
+  orange: 'bg-orange-bg text-orange-ink',
+  brand: 'bg-brand-50 text-brand-ink',
   neutral: 'bg-chip text-ink-2',
 }
 

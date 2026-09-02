@@ -37,7 +37,7 @@ export default function Segmented({
               size === 'sm' ? 'h-6 px-2.5 text-[11px]' : 'h-7 px-3 text-[12px]',
               active
                 ? variant === 'filled'
-                  ? 'bg-brand-600 text-white'
+                  ? 'bg-brand-600 text-on-brand'
                   : 'bg-surface text-ink shadow-[var(--shadow-raised)]'
                 : 'text-ink-3 hover:text-ink-2',
             )}

@@ -1,17 +1,29 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Search, Bell, MessageSquare, Plus, Menu, LogOut, User } from 'lucide-react'
+import {
+  Search,
+  Bell,
+  MessageSquare,
+  Plus,
+  Menu,
+  LogOut,
+  User,
+  Sun,
+  Moon,
+} from 'lucide-react'
 import { cn } from '@/lib/cn'
 import Button from '@/components/ui/Button'
 import { searchPlaceholders } from '@/data/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
+import { useTheme } from '@/context/ThemeContext'
 
 export default function Topbar({ onMenuClick, onCreateProject }) {
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const { user, signOut } = useAuth()
   const { toast } = useToast()
+  const { resolvedTheme, toggleTheme } = useTheme()
 
   const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -127,6 +139,26 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
                 </p>
                 <p className="truncate text-[11px] text-ink-3">{user.email}</p>
               </div>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  document.body.classList.add('theme-transition')
+                  toggleTheme()
+                  window.setTimeout(
+                    () => document.body.classList.remove('theme-transition'),
+                    260,
+                  )
+                }}
+                className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] text-ink-2 transition-colors hover:bg-subtle"
+              >
+                {resolvedTheme === 'dark' ? (
+                  <Sun className="size-4" strokeWidth={1.75} />
+                ) : (
+                  <Moon className="size-4" strokeWidth={1.75} />
+                )}
+                Switch to {resolvedTheme === 'dark' ? 'light' : 'dark'} mode
+              </button>
               <Link
                 to="/settings"
                 role="menuitem"

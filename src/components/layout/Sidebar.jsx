@@ -21,7 +21,7 @@ function NavItem({ item, onNavigate }) {
         cn(
           'focus-ring relative flex items-center gap-3 rounded-r-[8px] py-2.5 pl-4 pr-3 text-[13.5px] transition-colors',
           isActive
-            ? 'bg-brand-50 font-semibold text-brand-600'
+            ? 'bg-brand-50 font-semibold text-brand-ink'
             : 'font-medium text-ink-2 hover:bg-canvas hover:text-ink',
         )
       }
@@ -32,7 +32,7 @@ function NavItem({ item, onNavigate }) {
             <span className="absolute inset-y-0 left-0 w-[2px] rounded-r bg-success" />
           ) : null}
           <Icon
-            className={cn('size-[18px] shrink-0', isActive && 'text-brand-600')}
+            className={cn('size-[18px] shrink-0', isActive && 'text-brand-ink')}
             strokeWidth={1.75}
           />
           {item.label}
@@ -49,7 +49,7 @@ export default function Sidebar({ open, onClose }) {
       <div
         onClick={onClose}
         className={cn(
-          'fixed inset-0 z-40 bg-ink/25 transition-opacity lg:hidden',
+          'fixed inset-0 z-40 bg-scrim transition-opacity lg:hidden',
           open ? 'opacity-100' : 'pointer-events-none opacity-0',
         )}
         aria-hidden="true"

@@ -23,7 +23,7 @@ export default function RootError() {
         <p className="mt-2 text-[13px] leading-relaxed text-ink-2">{detail}</p>
         <Link
           to="/dashboard"
-          className="focus-ring mt-6 inline-flex h-10 items-center justify-center rounded-[8px] bg-brand-600 px-4 text-sm font-semibold text-white transition hover:bg-brand-700"
+          className="focus-ring mt-6 inline-flex h-10 items-center justify-center rounded-[8px] bg-brand-600 px-4 text-sm font-semibold text-on-brand transition hover:bg-brand-700"
         >
           Back to Overview
         </Link>

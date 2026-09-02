@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Camera,
+  Check,
   Monitor,
   Moon,
   MoreVertical,
@@ -18,6 +19,7 @@ import Chip from '@/components/ui/Chip'
 import Modal from '@/components/ui/Modal'
 import { cn } from '@/lib/cn'
 import { useAuth } from '@/context/AuthContext'
+import { useTheme } from '@/context/ThemeContext'
 import { useToast } from '@/context/ToastContext'
 import { teamMembers } from '@/data/user'
 
@@ -40,10 +42,26 @@ export default function SettingsPage() {
   const { toast } = useToast()
   const navigate = useNavigate()
 
-  const [theme, setTheme] = useState('light')
+  const { theme, resolvedTheme, systemDark, setTheme } = useTheme()
   const [language, setLanguage] = useState(languages[0])
   const [inviteOpen, setInviteOpen] = useState(false)
   const [memberMenu, setMemberMenu] = useState(null)
+
+  /* Briefly enable colour transitions so a theme switch cross-fades instead of
+     snapping. The class is removed afterwards so ordinary interactions (hover,
+     route changes) are not slowed by a global transition rule. */
+  const applyTheme = (next) => {
+    if (next === theme) return
+    const body = document.body
+    body.classList.add('theme-transition')
+    setTheme(next)
+    window.setTimeout(() => body.classList.remove('theme-transition'), 260)
+    toast(
+      next === 'system'
+        ? 'Theme now follows your device setting.'
+        : `${next === 'dark' ? 'Dark' : 'Light'} mode enabled.`,
+    )
+  }
 
   return (
     <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
@@ -64,7 +82,7 @@ export default function SettingsPage() {
                 })
               }
               aria-label="Change profile photo"
-              className="focus-ring absolute bottom-1 right-1 flex size-7 items-center justify-center rounded-full bg-brand-600 text-white ring-2 ring-surface transition hover:bg-brand-700"
+              className="focus-ring absolute bottom-1 right-1 flex size-7 items-center justify-center rounded-full bg-brand-600 text-on-brand ring-2 ring-surface transition hover:bg-brand-700"
             >
               <Camera className="size-3.5" strokeWidth={2} />
             </button>
@@ -101,7 +119,7 @@ export default function SettingsPage() {
         <div className="grid grid-cols-2 gap-4">
           <Card className="p-4">
             <p className="text-[11px] text-ink-3">Active Projects</p>
-            <p className="tnum mt-2 text-[24px] font-bold leading-none text-brand-600">
+            <p className="tnum mt-2 text-[24px] font-bold leading-none text-brand-ink">
               {user.activeProjects}
             </p>
           </Card>
@@ -118,7 +136,7 @@ export default function SettingsPage() {
       <div className="space-y-4">
         <Card className="p-5">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="size-4 text-brand-600" strokeWidth={2} />
+            <ShieldCheck className="size-4 text-brand-ink" strokeWidth={2} />
             <h2 className="text-[15px] font-semibold text-ink">
               Account & Security
             </h2>
@@ -153,7 +171,7 @@ export default function SettingsPage() {
         <Card className="p-5">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <Users className="size-4 text-brand-600" strokeWidth={2} />
+              <Users className="size-4 text-brand-ink" strokeWidth={2} />
               <h2 className="text-[15px] font-semibold text-ink">
                 Team Management
               </h2>
@@ -161,7 +179,7 @@ export default function SettingsPage() {
             <button
               type="button"
               onClick={() => setInviteOpen(true)}
-              className="focus-ring rounded-[8px] border border-brand-600 px-3 py-1.5 text-[12px] font-semibold text-brand-600 transition-colors hover:bg-brand-50"
+              className="focus-ring rounded-[8px] border border-brand-ink px-3 py-1.5 text-[12px] font-semibold text-brand-ink transition-colors hover:bg-brand-50"
             >
               Invite Member
             </button>
@@ -203,7 +221,7 @@ export default function SettingsPage() {
         <Card className="p-5">
           <div className="flex items-center gap-2">
             <SlidersHorizontal
-              className="size-4 text-brand-600"
+              className="size-4 text-brand-ink"
               strokeWidth={2}
             />
             <h2 className="text-[15px] font-semibold text-ink">
@@ -231,42 +249,53 @@ export default function SettingsPage() {
           </div>
 
           <div className="mt-5">
-            <p className="eyebrow mb-2">Display Theme</p>
-            <div className="grid max-w-lg grid-cols-3 gap-3">
+            <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+              <p className="eyebrow">Display Theme</p>
+              <p className="text-[11px] text-ink-3">
+                {theme === 'system'
+                  ? `Following your device — currently ${systemDark ? 'dark' : 'light'}`
+                  : `Locked to ${resolvedTheme}`}
+              </p>
+            </div>
+
+            <div
+              role="radiogroup"
+              aria-label="Display theme"
+              className="grid max-w-lg grid-cols-3 gap-3"
+            >
               {themes.map((option) => {
                 const Icon = option.icon
                 const active = theme === option.id
-                const dark = option.id === 'dark'
-                const system = option.id === 'system'
+                const isDark = option.id === 'dark'
+                const isSystem = option.id === 'system'
 
                 return (
                   <button
                     key={option.id}
                     type="button"
-                    onClick={() => {
-                      setTheme(option.id)
-                      if (option.id !== 'light') {
-                        toast(
-                          'Only Light Mode is implemented — every mockup is light-only.',
-                          { tone: 'info' },
-                        )
-                      }
-                    }}
-                    aria-pressed={active}
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => applyTheme(option.id)}
                     className={cn(
-                      'focus-ring flex flex-col items-center justify-center gap-2 rounded-[10px] border-2 px-3 py-6 transition-colors',
-                      dark && 'bg-dark-surface text-white',
-                      system && 'bg-sys-surface text-ink-2',
-                      !dark && !system && 'bg-surface text-ink',
+                      'focus-ring relative flex flex-col items-center justify-center gap-2 rounded-[10px] border-2 px-3 py-6 transition-colors',
+                      isDark && 'bg-dark-surface text-white',
+                      isSystem && 'bg-sys-surface text-ink-2',
+                      !isDark && !isSystem && 'bg-surface text-ink',
                       active
-                        ? 'border-brand-600'
+                        ? 'border-brand-ink'
                         : 'border-transparent hover:border-line-strong',
                     )}
                   >
+                    {active ? (
+                      <Check
+                        className="absolute right-2 top-2 size-3.5 text-brand-ink"
+                        strokeWidth={2.5}
+                      />
+                    ) : null}
                     <Icon
                       className={cn(
                         'size-5',
-                        !dark && !system && 'text-warning',
+                        !isDark && !isSystem && 'text-warning',
                       )}
                       strokeWidth={1.75}
                     />
@@ -277,6 +306,12 @@ export default function SettingsPage() {
                 )
               })}
             </div>
+
+            <p className="mt-3 max-w-lg text-[11.5px] leading-relaxed text-ink-3">
+              The mockups are light-only, so the dark palette is an authored
+              counterpart rather than a sampled one — it preserves the light
+              palette&rsquo;s relationships instead of its hex values.
+            </p>
           </div>
         </Card>
       </div>

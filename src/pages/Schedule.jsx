@@ -227,7 +227,7 @@ export default function Schedule() {
             <button
               type="button"
               onClick={() => toast('Workforce reallocation applied.')}
-              className="focus-ring shrink-0 rounded text-[11.5px] font-semibold text-brand-600 hover:underline"
+              className="focus-ring shrink-0 rounded text-[11.5px] font-semibold text-brand-ink hover:underline"
             >
               {workforce.optimization.action}
             </button>
@@ -264,7 +264,7 @@ export default function Schedule() {
                 tone: 'info',
               })
             }
-            className="focus-ring mt-5 rounded text-[12px] font-semibold text-brand-600 hover:underline"
+            className="focus-ring mt-5 rounded text-[12px] font-semibold text-brand-ink hover:underline"
           >
             View Full Audit Log
           </button>

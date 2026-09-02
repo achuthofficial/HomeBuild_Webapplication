@@ -1,10 +1,10 @@
 import { cn } from '@/lib/cn'
 
 const strokes = {
-  success: '#10B981',
-  brand: '#0058BE',
-  danger: '#C84848',
-  warning: '#F59E0B',
+  success: 'var(--color-success)',
+  brand: 'var(--color-brand-600)',
+  danger: 'var(--color-danger-bar)',
+  warning: 'var(--color-warning)',
 }
 
 /**

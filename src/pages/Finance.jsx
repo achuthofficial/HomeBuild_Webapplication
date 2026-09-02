@@ -22,7 +22,7 @@ import {
 
 /* Tile tints sampled from the mockup: #D8E2FF / #FEF5E7 / #F3EFFE. */
 const iconTones = {
-  brand: 'bg-brand-tile text-brand-600',
+  brand: 'bg-brand-tile text-brand-ink',
   warning: 'bg-warning-tile text-warning',
   violet: 'bg-violet-bg text-violet',
 }
@@ -147,7 +147,7 @@ export default function Finance() {
           <button
             type="button"
             onClick={() => toast('Full payment ledger is not in this prototype.', { tone: 'info' })}
-            className="focus-ring rounded text-[12px] font-semibold text-brand-600 hover:underline"
+            className="focus-ring rounded text-[12px] font-semibold text-brand-ink hover:underline"
           >
             View All
           </button>

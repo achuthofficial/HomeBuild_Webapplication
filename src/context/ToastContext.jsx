@@ -73,7 +73,7 @@ export function ToastProvider({ children }) {
             {t.tone === 'success' ? (
               <CheckCircle2 className="mt-px size-4 shrink-0 text-success" />
             ) : (
-              <Info className="mt-px size-4 shrink-0 text-brand-600" />
+              <Info className="mt-px size-4 shrink-0 text-brand-ink" />
             )}
             <p className="flex-1 text-[13px] leading-snug text-ink">{t.message}</p>
             <button

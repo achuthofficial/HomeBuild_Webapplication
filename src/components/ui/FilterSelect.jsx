@@ -83,7 +83,7 @@ export default function FilterSelect({
                 className={cn(
                   'flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[12px] transition-colors hover:bg-subtle',
                   option === value
-                    ? 'font-semibold text-brand-600'
+                    ? 'font-semibold text-brand-ink'
                     : 'text-ink-2',
                 )}
               >

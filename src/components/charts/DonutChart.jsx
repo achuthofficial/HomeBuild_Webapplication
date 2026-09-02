@@ -2,11 +2,11 @@ import { useId, useState } from 'react'
 import { cn } from '@/lib/cn'
 
 const fills = {
-  success: '#10B981',
-  warning: '#F59E0B',
-  brand: '#0058BE',
-  violet: '#8B5CF6',
-  neutral: '#A7AFBA',
+  success: 'var(--color-success)',
+  warning: 'var(--color-warning)',
+  brand: 'var(--color-brand-600)',
+  violet: 'var(--color-violet)',
+  neutral: 'var(--color-ink-4)',
 }
 
 /**
@@ -51,7 +51,7 @@ export default function DonutChart({
             cy={size / 2}
             r={radius}
             fill="none"
-            stroke="#ECF0F5"
+            stroke="var(--color-muted)"
             strokeWidth={thickness}
           />
           {data.map((segment) => {

@@ -54,7 +54,7 @@ export default function NotFound() {
               <li key={item.to}>
                 <Link
                   to={item.to}
-                  className="focus-ring flex items-center gap-2.5 rounded-[10px] border border-line bg-surface px-3.5 py-2.5 text-[13px] font-medium text-ink-2 transition-colors hover:border-brand-200 hover:text-brand-600"
+                  className="focus-ring flex items-center gap-2.5 rounded-[10px] border border-line bg-surface px-3.5 py-2.5 text-[13px] font-medium text-ink-2 transition-colors hover:border-brand-200 hover:text-brand-ink"
                 >
                   <Icon className="size-4 shrink-0" strokeWidth={1.75} />
                   {item.label}

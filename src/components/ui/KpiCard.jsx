@@ -12,7 +12,7 @@ import ProgressBar from './ProgressBar'
  * in their own pages.)
  */
 const iconTones = {
-  brand: 'text-brand-600',
+  brand: 'text-brand-ink',
   success: 'text-success',
   warning: 'text-warning',
   violet: 'text-violet',
@@ -25,7 +25,7 @@ const valueTones = {
   warning: 'text-warning',
   violet: 'text-violet',
   danger: 'text-danger',
-  brand: 'text-brand-600',
+  brand: 'text-brand-ink',
 }
 
 const subTones = {

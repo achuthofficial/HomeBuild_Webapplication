@@ -17,7 +17,9 @@ export default function Logo({ size = 32, className }) {
           fill="#fff"
           fillOpacity="0.95"
         />
-        <path d="M9 14h6v6H9z" fill="#0058BE" fillOpacity="0.28" />
+        {/* Door notch: a neutral darkening so it reads on any tile shade,
+            since --brand-600 shifts between themes. */}
+        <path d="M9 14h6v6H9z" fill="#000" fillOpacity="0.22" />
       </svg>
     </span>
   )

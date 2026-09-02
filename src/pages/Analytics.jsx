@@ -22,7 +22,7 @@ const iconTones = {
   danger: 'bg-danger-tile text-danger',
   warning: 'bg-warning-tile text-warning',
   success: 'bg-success-bg text-success',
-  brand: 'bg-brand-tile text-brand-600',
+  brand: 'bg-brand-tile text-brand-ink',
 }
 
 const subTones = {
@@ -230,7 +230,7 @@ export default function Analytics() {
                       onClick={() =>
                         toast(`“${alert.type}” acknowledged.`)
                       }
-                      className="focus-ring rounded text-[12px] font-semibold text-brand-600 hover:underline"
+                      className="focus-ring rounded text-[12px] font-semibold text-brand-ink hover:underline"
                     >
                       Acknowledge
                     </button>

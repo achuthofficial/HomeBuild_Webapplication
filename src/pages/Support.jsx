@@ -48,7 +48,7 @@ export default function Support() {
           const Icon = channel.icon
           return (
             <Card key={channel.id} className="p-5">
-              <span className="flex size-8 items-center justify-center rounded-[8px] bg-brand-50 text-brand-600">
+              <span className="flex size-8 items-center justify-center rounded-[8px] bg-brand-50 text-brand-ink">
                 <Icon className="size-4" strokeWidth={1.75} />
               </span>
               <h2 className="mt-4 text-[15px] font-semibold text-ink">
@@ -64,7 +64,7 @@ export default function Support() {
                     tone: 'info',
                   })
                 }
-                className="focus-ring mt-4 rounded text-[12px] font-semibold text-brand-600 hover:underline"
+                className="focus-ring mt-4 rounded text-[12px] font-semibold text-brand-ink hover:underline"
               >
                 {channel.action}
               </button>

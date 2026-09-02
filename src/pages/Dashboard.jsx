@@ -11,7 +11,7 @@ import { currentUser } from '@/data/user'
 import { dashboardKpis, projectStatusRows, siteUpdates } from '@/data/dashboard'
 
 const rowIconTones = {
-  brand: 'bg-brand-50 text-brand-600',
+  brand: 'bg-brand-50 text-brand-ink',
   violet: 'bg-violet-bg text-violet',
   success: 'bg-success-bg text-success',
 }
@@ -52,7 +52,7 @@ export default function Dashboard() {
             action={
               <Link
                 to="/projects"
-                className="focus-ring rounded text-[12px] font-semibold text-brand-600 hover:underline"
+                className="focus-ring rounded text-[12px] font-semibold text-brand-ink hover:underline"
               >
                 View All
               </Link>
@@ -158,7 +158,7 @@ export default function Dashboard() {
 
           <Link
             to="/construction"
-            className="focus-ring mt-5 block rounded text-[12px] font-semibold text-brand-600 hover:underline"
+            className="focus-ring mt-5 block rounded text-[12px] font-semibold text-brand-ink hover:underline"
           >
             Open Daily Site Feed
           </Link>

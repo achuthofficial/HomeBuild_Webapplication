@@ -7,8 +7,8 @@ function Star({ fill, gradientId }) {
       {fill > 0 && fill < 1 ? (
         <defs>
           <linearGradient id={gradientId}>
-            <stop offset={`${fill * 100}%`} stopColor="#F59E0B" />
-            <stop offset={`${fill * 100}%`} stopColor="#D3D7DD" />
+            <stop offset={`${fill * 100}%`} stopColor="var(--color-warning)" />
+            <stop offset={`${fill * 100}%`} stopColor="var(--color-line-strong)" />
           </linearGradient>
         </defs>
       ) : null}
@@ -16,9 +16,9 @@ function Star({ fill, gradientId }) {
         d="M10 1.6l2.47 5.01 5.53.8-4 3.9.94 5.5L10 14.21l-4.94 2.6.94-5.5-4-3.9 5.53-.8L10 1.6z"
         fill={
           fill >= 1
-            ? '#F59E0B'
+            ? 'var(--color-warning)'
             : fill <= 0
-              ? '#D3D7DD'
+              ? 'var(--color-line-strong)'
               : `url(#${gradientId})`
         }
       />

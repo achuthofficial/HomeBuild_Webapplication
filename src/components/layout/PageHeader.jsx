@@ -32,7 +32,7 @@ export default function PageHeader({
                       {crumb.label}
                     </Link>
                   ) : (
-                    <span className={last ? 'text-brand-600' : 'text-ink-4'}>
+                    <span className={last ? 'text-brand-ink' : 'text-ink-4'}>
                       {crumb.label}
                     </span>
                   )}

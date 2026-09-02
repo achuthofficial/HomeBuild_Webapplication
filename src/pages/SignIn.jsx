@@ -103,7 +103,7 @@ export default function SignIn() {
                       tone: 'info',
                     })
                   }
-                  className="focus-ring rounded text-[12px] font-medium text-brand-600 hover:underline"
+                  className="focus-ring rounded text-[12px] font-medium text-brand-ink hover:underline"
                 >
                   Forgot Password?
                 </button>
@@ -177,7 +177,7 @@ export default function SignIn() {
           alt="Contemporary home at dusk with a reflecting pool"
           className="absolute inset-0 size-full object-cover"
         />
-        <div className="absolute inset-0 bg-gradient-to-tr from-ink/45 via-ink/10 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-tr from-black/50 via-black/15 to-transparent" />
 
         <figure className="absolute bottom-10 left-8 right-8 max-w-[340px] rounded-[14px] bg-surface/92 p-5 backdrop-blur-sm xl:left-14">
           <div className="flex items-center gap-2.5">

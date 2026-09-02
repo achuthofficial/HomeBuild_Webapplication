@@ -16,6 +16,28 @@
       rel="stylesheet"
     />
     <title>HomeBuild — Construction Management</title>
+    <script>
+      /* Applies the saved theme before first paint so there is no flash of the
+         wrong palette. Mirrors the logic in src/context/ThemeContext.jsx. */
+      (function () {
+        try {
+          var stored = localStorage.getItem('homebuild.theme')
+          var choice =
+            stored === 'light' || stored === 'dark' || stored === 'system'
+              ? stored
+              : 'system'
+          var dark =
+            choice === 'dark' ||
+            (choice === 'system' &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches)
+          var resolved = dark ? 'dark' : 'light'
+          document.documentElement.dataset.theme = resolved
+          document.documentElement.style.colorScheme = resolved
+        } catch (e) {
+          document.documentElement.dataset.theme = 'light'
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -48,8 +48,8 @@ export default function AreaTrend({ data, className }) {
         >
           <defs>
             <linearGradient id={`fill-${uid}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#F59E0B" stopOpacity="0.22" />
-              <stop offset="100%" stopColor="#F59E0B" stopOpacity="0" />
+              <stop offset="0%" stopColor="var(--color-warning)" stopOpacity="0.22" />
+              <stop offset="100%" stopColor="var(--color-warning)" stopOpacity="0" />
             </linearGradient>
           </defs>
 
@@ -60,7 +60,7 @@ export default function AreaTrend({ data, className }) {
               x2={VIEW_W - PAD.right}
               y1={VIEW_H * ratio}
               y2={VIEW_H * ratio}
-              stroke="#ECF0F5"
+              stroke="var(--color-muted)"
               strokeWidth="1"
               vectorEffect="non-scaling-stroke"
             />
@@ -70,7 +70,7 @@ export default function AreaTrend({ data, className }) {
           <path
             d={linePath}
             fill="none"
-            stroke="#F59E0B"
+            stroke="var(--color-warning)"
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -85,7 +85,7 @@ export default function AreaTrend({ data, className }) {
                   x2={p.x}
                   y1={0}
                   y2={VIEW_H}
-                  stroke="#D3D7DD"
+                  stroke="var(--color-line-strong)"
                   strokeWidth="1"
                   strokeDasharray="3 3"
                   vectorEffect="non-scaling-stroke"
@@ -95,8 +95,8 @@ export default function AreaTrend({ data, className }) {
                 cx={p.x}
                 cy={p.y}
                 r={hover === i ? 5 : 3.5}
-                fill="#FFFFFF"
-                stroke="#F59E0B"
+                fill="var(--color-surface)"
+                stroke="var(--color-warning)"
                 strokeWidth="2"
                 vectorEffect="non-scaling-stroke"
               />

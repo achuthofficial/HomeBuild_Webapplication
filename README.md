@@ -72,7 +72,7 @@ HomeBuild_Webapplication/
 │   │   └── ui/              Button · Card · Chip · StatusDot · ProgressBar
 │   │                        AvatarStack · KpiCard · Segmented · FilterSelect
 │   │                        Pagination · StarRating · Sparkline · Modal
-│   ├── context/             AuthContext · ToastContext
+│   ├── context/             ThemeContext · AuthContext · ToastContext
 │   ├── data/                one module per screen — all fixture data
 │   ├── layouts/             AppLayout (workspace shell) · AuthLayout
 │   ├── lib/                 cn · format (₹, dates, deltas)
@@ -113,8 +113,49 @@ inventory and a list of inconsistencies is in `POTIIP/design/design_system.md`.
 | Ink ramp | `#0F172A` → `#505F76` → `#7A8597` → `#A7AFBA` |
 
 Type is Inter on a 24 / 18 / 14 / 12 / 11 ladder, with uppercase letter-spaced
-11px overlines on KPI cards and table headers. Cards are 12px radius, buttons
+11px eyebrows on KPI cards and table headers. Cards are 12px radius, buttons
 8px, chips fully rounded.
+
+> **Do not name the eyebrow class `.overline`.** `overline` is a built-in
+> Tailwind utility (`text-decoration-line: overline`) and the utility layer
+> wins, drawing a literal line above every KPI label and table header.
+> Tailwind's scanner is loose enough that even a *prop* named `overline`
+> regenerates it, so the prop is `eyebrow` too.
+
+---
+
+## Theming
+
+Three modes, matching the Settings mockup: **Light**, **Dark**, **System**.
+
+- `src/context/ThemeContext.jsx` holds the user's *choice*; `system` is
+  collapsed to a concrete value by reading `prefers-color-scheme`, and stays
+  live via a `matchMedia` listener if the OS setting changes mid-session.
+- Only the **resolved** value is stamped on `<html>` as `data-theme`, so
+  `src/index.css` needs a single `:root[data-theme='dark']` block rather than
+  duplicating every token inside a media query.
+- The choice persists to `localStorage`, and an inline script in `index.html`
+  applies it **before first paint**, so there is no flash of the wrong theme.
+- Switching adds `body.theme-transition` for 260ms so colours cross-fade
+  instead of snapping, then removes it so ordinary hovers aren't slowed.
+- `color-scheme` is set on the root, so native scrollbars, form controls and
+  autofill follow the theme too.
+
+**Everything is token-driven.** Components reference `bg-surface`, `text-ink`,
+`border-line` and so on — no component holds a raw hex. SVG charts use
+`var(--color-…)` in their `fill`/`stroke` attributes for the same reason. That
+means the dark theme required no per-component overrides, only a second token
+block.
+
+Two splits exist purely to survive the inversion:
+
+| Token | Why |
+|---|---|
+| `--color-brand-ink` vs `--color-brand-600` | A fill must be dark enough for white text; a link must be light enough for a dark canvas. One value can't do both. |
+| `--color-scrim` | Modal and drawer overlays used `ink`, which is *light* in dark mode — the scrim would have brightened the page instead of dimming it. |
+
+Photography is dimmed slightly (`brightness(.88)`) in dark mode so images don't
+glare against the surrounding surfaces.
 
 ---
 
@@ -130,8 +171,8 @@ Type is Inter on a 24 / 18 / 14 / 12 / 11 ladder, with uppercase letter-spaced
 | Schedule | Gantt / List / Board views, expand-collapse groups, task detail dialog, zoom, Apply optimisation, Export PDF |
 | Contractors | All / Internal / Sub tabs, trade filter, Min Rating toggle, row action sheet |
 | Analytics | Severity + Status filters, 13-page pagination over 128 alerts, acknowledge |
-| Settings | Theme picker, language switch, Invite Member, member action sheet, Log Out |
-| Global | Sidebar nav, topbar search, notifications, avatar menu, Create New Project, toasts |
+| Settings | Light / Dark / System theme picker, language switch, Invite Member, member action sheet, Log Out |
+| Global | Sidebar nav, topbar search, notifications, avatar menu (with a quick theme toggle), Create New Project, toasts |
 
 Actions that would hit a backend raise a toast saying so — no click is a dead
 end, and nothing silently pretends to have saved.
@@ -149,8 +190,10 @@ recorded so the choice is visible rather than silently baked in:
 2. **Finance donut** — the source figures (45 / 25 / 38) sum to 108% under a
    "100% Total Costs" label. The legend prints them verbatim; arc lengths are
    normalised against the real sum so the ring closes.
-3. **Dark mode** — every mockup is light-only, so Dark and System in the theme
-   picker are selectable but not implemented, and say so when picked.
+3. **Dark palette is authored, not sampled** — every mockup is light-only, so
+   there was nothing to measure. The dark theme preserves the light palette's
+   *relationships* rather than its hex values, and every foreground/background
+   pair was contrast-checked (all pass WCAG AA). See **Theming** below.
 4. **Project names** — the mockups use three non-overlapping sets across
    Dashboard, Portfolio and Alerts. All of them are kept so each screen matches
    its source; unify `src/data/` before using this as demo data.

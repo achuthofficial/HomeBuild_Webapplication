@@ -151,7 +151,7 @@ export default function Projects() {
               className="focus-ring flex min-h-[210px] flex-col items-center justify-center rounded-[12px] border border-dashed border-line-strong bg-subtle/60 p-6 text-center transition-colors hover:border-brand-200 hover:bg-brand-50/60"
             >
               <PlusCircle
-                className="size-7 text-brand-600"
+                className="size-7 text-brand-ink"
                 strokeWidth={1.5}
               />
               <span className="mt-3 text-[15px] font-semibold text-ink">

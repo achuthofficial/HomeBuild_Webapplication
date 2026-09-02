@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 
 /* ==========================================================================
-   HOMEBUILD DESIGN TOKENS
+   HOMEBUILD DESIGN TOKENS — LIGHT (the mockups' palette)
    Every value sampled pixel-by-pixel from design/screenshots in the POTIIP
    repo. See POTIIP/design/design_system.md for the full derivation.
    ========================================================================== */
@@ -13,6 +13,13 @@
   --color-brand-400: #4082ce;
   --color-brand-600: #0058be;
   --color-brand-700: #00478f;
+
+  /* Brand as FOREGROUND (links, active nav, icons). Split from --brand-600
+     because a fill and a text colour cannot both stay legible across themes:
+     the fill must be dark enough for white text, the text light enough for a
+     dark canvas. In light mode they are the same value. */
+  --color-brand-ink: #0058be;
+  --color-on-brand: #ffffff;
 
   /* --- Semantic ---------------------------------------------------------- */
   --color-success: #10b981;
@@ -28,6 +35,7 @@
   --color-violet-bg: #f3effe;
   --color-info-bg: #dbeafe;
   --color-orange-bg: #ffedd5;
+  --color-orange-ink: #c2410c;
   --color-chip: #eeeff2;
 
   /* Icon-tile tints. Sampled from the Finance and Alerts KPI cards, where
@@ -46,6 +54,7 @@
   --color-line-strong: #d3d7dd;
   --color-dark-surface: #2d3133;
   --color-sys-surface: #e6e8ea;
+  --color-scrim: rgba(15, 23, 42, 0.25);
 
   /* --- Ink --------------------------------------------------------------- */
   --color-ink: #0f172a;
@@ -69,6 +78,81 @@
     0 1px 3px rgba(15, 23, 42, 0.04);
 }
 
+/* ==========================================================================
+   DARK PALETTE
+
+   No dark mockup exists — every screenshot is light-only — so this is an
+   authored counterpart, not a sampled one. It holds the light palette's
+   *relationships* rather than its hex values:
+
+     · Hue identity is preserved (blue stays blue, the success green stays the
+       same green family) but foregrounds are lifted and tinted backgrounds
+       are darkened, so contrast survives the inversion.
+     · Semantic FILLS (buttons, Gantt bars, progress rails) keep saturated
+       colour so brand identity carries over.
+     · Semantic TINTS (chips, icon tiles) become dark, low-chroma surfaces.
+
+   Only the RESOLVED theme is stamped on <html>, so `system` needs no separate
+   media query — ThemeContext collapses it to light or dark first.
+   ========================================================================== */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* --- Surfaces ---------------------------------------------------------- */
+  --color-canvas: #0b1017;
+  --color-surface: #131b26;
+  --color-subtle: #1b2430;
+  --color-muted: #202b38;
+  --color-line: #263241;
+  --color-line-strong: #35455a;
+  --color-dark-surface: #060a10;
+  --color-sys-surface: #263241;
+  --color-scrim: rgba(0, 0, 0, 0.6);
+
+  /* --- Ink --------------------------------------------------------------- */
+  --color-ink: #e9eef5;
+  --color-ink-2: #aab8ca;
+  --color-ink-3: #8a99ad;
+  --color-ink-4: #6d7d91;
+
+  /* --- Brand ------------------------------------------------------------- */
+  --color-brand-50: #16243a;
+  --color-brand-100: #1b2e49;
+  --color-brand-200: #2f5f8f;
+  --color-brand-400: #4a90e2;
+  --color-brand-600: #1268ce;
+  --color-brand-700: #175fb0;
+  --color-brand-ink: #6fb0f7;
+  --color-brand-tile: #17304f;
+  --color-on-brand: #ffffff;
+
+  /* --- Semantic ---------------------------------------------------------- */
+  --color-success: #2ecf99;
+  --color-success-bg: #0f2b21;
+  --color-warning: #f5b544;
+  --color-warning-bg: #2b2113;
+  --color-warning-bg-strong: #3a2c17;
+  --color-warning-tile: #2b2113;
+  --color-danger: #ff7070;
+  --color-danger-bar: #d9534f;
+  --color-danger-bg: #34181a;
+  --color-danger-tile: #2a1618;
+  --color-violet: #a98cf9;
+  --color-violet-bar: #8b5cf6;
+  --color-violet-bg: #211a35;
+  --color-info-bg: #14263f;
+  --color-orange-bg: #2e1f12;
+  --color-orange-ink: #f0975a;
+  --color-chip: #212c3a;
+
+  /* --- Elevation --------------------------------------------------------- */
+  /* A hairline alone reads as flat on a dark canvas, so shadows do more work. */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.6),
+    0 2px 6px -2px rgba(0, 0, 0, 0.4);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
 /* Tailwind v4 defaults `border-color` to currentColor. Restore the v3
    behaviour so a bare `border` uses the design-system hairline. */
 @layer base {
@@ -76,6 +160,10 @@
   ::before,
   ::after {
     border-color: var(--color-line);
+  }
+
+  :root {
+    color-scheme: light;
   }
 
   html {
@@ -92,6 +180,18 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
+  /* Token swaps animate rather than snap when the theme changes. The class is
+     added only around a switch, so the first paint is not animated. */
+  body.theme-transition,
+  body.theme-transition * {
+    transition:
+      background-color 220ms ease,
+      border-color 220ms ease,
+      color 220ms ease,
+      fill 220ms ease,
+      stroke 220ms ease;
+  }
+
   /* KPI figures, currency and table amounts align down the column. */
   .tnum {
     font-variant-numeric: tabular-nums;
@@ -100,7 +200,10 @@
 }
 
 @layer components {
-  /* Uppercase tracked label used on KPI cards and table headers. */
+  /* Uppercase tracked label used on KPI cards and table headers.
+     NOTE: do NOT name this `.overline` — that is a built-in Tailwind utility
+     (text-decoration-line: overline) and the utility layer wins, drawing a
+     literal line above every label. */
   .eyebrow {
     @apply text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-4;
   }
@@ -131,6 +234,12 @@
   .scrollbar-slim::-webkit-scrollbar-track {
     background: transparent;
   }
+}
+
+/* Photography carries its own light. Taking a little brightness out of it in
+   dark mode stops images glaring against the surrounding surfaces. */
+:root[data-theme='dark'] img:not([src$='.svg']) {
+  filter: brightness(0.88) contrast(1.02);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -47,7 +47,7 @@ export default function Pagination({ page, totalPages, onChange, className }) {
             className={cn(
               'focus-ring tnum flex size-7 items-center justify-center rounded-[6px] text-[12px] font-semibold transition-colors',
               p === page
-                ? 'bg-brand-600 text-white'
+                ? 'bg-brand-600 text-on-brand'
                 : 'text-ink-2 hover:bg-subtle',
             )}
           >

@@ -150,7 +150,7 @@ export default function Construction() {
                           })
                         }
                         aria-label="Add photo"
-                        className="focus-ring flex aspect-[4/3] items-center justify-center rounded-[8px] border border-dashed border-line-strong bg-subtle/60 text-ink-4 transition-colors hover:border-brand-200 hover:text-brand-600"
+                        className="focus-ring flex aspect-[4/3] items-center justify-center rounded-[8px] border border-dashed border-line-strong bg-subtle/60 text-ink-4 transition-colors hover:border-brand-200 hover:text-brand-ink"
                       >
                         <Plus className="size-5" strokeWidth={1.75} />
                       </button>
@@ -177,7 +177,7 @@ export default function Construction() {
         <aside className="space-y-5 lg:sticky lg:top-[88px] lg:self-start">
           <Card className="p-5">
             <div className="flex items-center gap-2">
-              <Sparkles className="size-4 text-brand-600" strokeWidth={2} />
+              <Sparkles className="size-4 text-brand-ink" strokeWidth={2} />
               <h2 className="text-[15px] font-semibold text-ink">AI Insights</h2>
             </div>
 
@@ -211,7 +211,7 @@ export default function Construction() {
                               { tone: 'info' },
                             )
                           }
-                          className="focus-ring mt-2 rounded text-[11.5px] font-semibold text-brand-600 hover:underline"
+                          className="focus-ring mt-2 rounded text-[11.5px] font-semibold text-brand-ink hover:underline"
                         >
                           {insight.action}
                         </button>

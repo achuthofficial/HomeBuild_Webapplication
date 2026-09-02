@@ -14,7 +14,7 @@ const textTones = {
   warning: 'text-warning',
   danger: 'text-danger',
   violet: 'text-violet',
-  brand: 'text-brand-600',
+  brand: 'text-brand-ink',
   neutral: 'text-ink-2',
   none: 'text-ink-2',
 }

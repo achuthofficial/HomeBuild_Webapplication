@@ -23,7 +23,7 @@ import {
 
 const badgeTones = {
   success: 'text-success',
-  brand: 'text-brand-600',
+  brand: 'text-brand-ink',
   warning: 'text-warning',
 }
 
@@ -36,8 +36,8 @@ const scoreTones = {
 const avatarTints = {
   ELECTRICAL: 'bg-violet-bg text-violet',
   CIVIL: 'bg-success-bg text-success',
-  MECHANICAL: 'bg-info-bg text-brand-600',
-  CLEANING: 'bg-orange-bg text-[#C2410C]',
+  MECHANICAL: 'bg-info-bg text-brand-ink',
+  CLEANING: 'bg-orange-bg text-orange-ink',
 }
 
 export default function Contractors() {

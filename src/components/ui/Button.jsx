@@ -5,7 +5,7 @@ import { cn } from '@/lib/cn'
  * Primary #0058BE, Success #10B981, Violet #8B5CF6, Warning #F59E0B.
  */
 const variants = {
-  primary: 'bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-700',
+  primary: 'bg-brand-600 text-on-brand hover:bg-brand-700 active:bg-brand-700',
   success: 'bg-success text-white hover:brightness-95 active:brightness-90',
   violet: 'bg-violet text-white hover:brightness-95 active:brightness-90',
   warning: 'bg-warning text-white hover:brightness-95 active:brightness-90',
@@ -13,7 +13,7 @@ const variants = {
     'bg-surface text-ink border border-line hover:bg-subtle active:bg-muted',
   ghost: 'bg-subtle text-ink-2 hover:bg-muted active:bg-line',
   danger: 'bg-subtle text-danger hover:bg-danger-bg active:bg-danger-bg',
-  link: 'bg-transparent text-brand-600 hover:underline underline-offset-2 px-0',
+  link: 'bg-transparent text-brand-ink hover:underline underline-offset-2 px-0',
 }
 
 const sizes = {

@@ -118,7 +118,7 @@ export default function GanttChart({ onTaskClick }) {
                 })`,
               }}
             >
-              <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[4px] bg-ink px-1.5 py-[3px] text-[9px] font-bold uppercase tracking-[0.05em] text-white">
+              <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[4px] bg-ink px-1.5 py-[3px] text-[9px] font-bold uppercase tracking-[0.05em] text-canvas">
                 {todayMarker.label}
               </span>
             </div>
