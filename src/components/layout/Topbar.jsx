@@ -17,6 +17,7 @@ import { searchPlaceholders } from '@/data/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { useTheme } from '@/context/ThemeContext'
+import { onAvatarError } from '@/lib/imageFallback'
 
 export default function Topbar({ onMenuClick, onCreateProject }) {
   const { pathname } = useLocation()
@@ -123,6 +124,7 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
           >
             <img
               src={user.avatar}
+              onError={onAvatarError}
               alt={user.name}
               className="size-8 rounded-full object-cover"
             />

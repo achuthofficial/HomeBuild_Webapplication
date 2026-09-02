@@ -1,24 +1,56 @@
 /**
- * Every external image URL used by the prototype lives here so the whole
- * demo can be re-pointed at real assets from a single file.
+ * Every image the prototype uses lives in public/images/ and is referenced
+ * from here, so the whole demo can be re-pointed from a single file.
+ *
+ * These used to be remote URLs (images.unsplash.com, i.pravatar.cc), which
+ * meant the demo rendered blank anywhere those hosts are unreachable —
+ * Codespaces on a restricted network, corporate proxies, offline. The bytes
+ * are now vendored into the repo.
+ *
+ * To (re)populate the folder:  node scripts/fetch-images.mjs
+ * Source URLs and licensing:   public/images/CREDITS.md
  */
 
-const unsplash = (id, w = 800, h = 600) =>
-  `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&w=${w}&q=70&h=${h}`
+/* Files in public/ are served from the site root, so these are absolute
+   paths rather than bundler imports — no hashing, but media.js stays a plain
+   string map and nothing else in the app has to change. */
+const IMAGES = '/images'
 
 export const media = {
   /** Sign-in hero: modern house at dusk with a pool. */
-  authHero: unsplash('1512917774080-9991f1c4c750', 1200, 1600),
+  authHero: `${IMAGES}/auth-hero.jpg`,
 
   /** Site-update and feed photography. */
-  siteAerial: unsplash('1503387762-592deb58ef4e', 800, 500),
-  slabPour: unsplash('1541888946425-d81bb19240f5', 400, 300),
-  crane: unsplash('1504307651254-35680f356dfd', 400, 300),
-  concreteCone: unsplash('1590069261209-f8e9b8642343', 400, 300),
-  rebar: unsplash('1581094794329-c8112a89af12', 400, 300),
-  ducting: unsplash('1621905251189-08b45d6a269e', 400, 300),
-  blueprintTablet: unsplash('1581092160562-40aa08e78837', 400, 300),
+  siteAerial: `${IMAGES}/site-aerial.jpg`,
+  slabPour: `${IMAGES}/slab-pour.jpg`,
+  crane: `${IMAGES}/crane.jpg`,
+  concreteCone: `${IMAGES}/concrete-cone.jpg`,
+  rebar: `${IMAGES}/rebar.jpg`,
+  ducting: `${IMAGES}/ducting.jpg`,
+  blueprintTablet: `${IMAGES}/blueprint-tablet.jpg`,
 }
 
-/** Deterministic avatar for a given person id — keeps demo faces stable. */
-export const avatar = (id, size = 96) => `https://i.pravatar.cc/${size}?img=${id}`
+/**
+ * The avatar ids vendored by scripts/fetch-images.mjs. Kept in step with the
+ * AVATAR_IDS manifest in that script — asking for an id outside this set
+ * would resolve to a file that was never downloaded.
+ */
+export const AVATAR_IDS = [12, 13, 33, 45, 52, 60]
+
+/**
+ * Deterministic avatar for a given person id — keeps demo faces stable.
+ *
+ * `size` is accepted for call-site compatibility but ignored: one 240px file
+ * is stored per id and the browser scales it down to whatever the layout
+ * asks for (26px in a stack, 32px in the topbar, 240px on Settings).
+ */
+export const avatar = (id, size) => {
+  if (import.meta.env?.DEV && !AVATAR_IDS.includes(id)) {
+    console.warn(
+      `[media] avatar(${id}) has no vendored file. Add ${id} to AVATAR_IDS ` +
+        `here and in scripts/fetch-images.mjs, then re-run the script.`,
+    )
+  }
+  void size
+  return `${IMAGES}/avatars/${id}.jpg`
+}

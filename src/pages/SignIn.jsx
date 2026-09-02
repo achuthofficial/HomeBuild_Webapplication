@@ -7,6 +7,7 @@ import Button from '@/components/ui/Button'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { media, avatar } from '@/data/media'
+import { onAvatarError, onImageError } from '@/lib/imageFallback'
 
 const socialProof = [avatar(33), avatar(45), avatar(12)]
 
@@ -174,6 +175,7 @@ export default function SignIn() {
       <div className="relative hidden lg:block">
         <img
           src={media.authHero}
+          onError={onImageError}
           alt="Contemporary home at dusk with a reflecting pool"
           className="absolute inset-0 size-full object-cover"
         />
@@ -186,6 +188,7 @@ export default function SignIn() {
                 <img
                   key={src}
                   src={src}
+                  onError={onAvatarError}
                   alt=""
                   className="size-6 rounded-full object-cover ring-2 ring-surface"
                   style={{ marginLeft: i === 0 ? 0 : -8 }}
