@@ -177,28 +177,3 @@ glare against the surrounding surfaces.
 Actions that would hit a backend raise a toast saying so — no click is a dead
 end, and nothing silently pretends to have saved.
 
----
-
-## Deliberate deviations from the mockups
-
-The screenshots contain internal inconsistencies. Each is resolved here and
-recorded so the choice is visible rather than silently baked in:
-
-1. **Sidebar active state** — the mockups show a green left bar on eight
-   screens and a blue right bar on Settings. This build uses the green left bar
-   everywhere.
-2. **Finance donut** — the source figures (45 / 25 / 38) sum to 108% under a
-   "100% Total Costs" label. The legend prints them verbatim; arc lengths are
-   normalised against the real sum so the ring closes.
-3. **Dark palette is authored, not sampled** — every mockup is light-only, so
-   there was nothing to measure. The dark theme preserves the light palette's
-   *relationships* rather than its hex values, and every foreground/background
-   pair was contrast-checked (all pass WCAG AA). See **Theming** below.
-4. **Project names** — the mockups use three non-overlapping sets across
-   Dashboard, Portfolio and Alerts. All of them are kept so each screen matches
-   its source; unify `src/data/` before using this as demo data.
-5. **Pagination depth** — Portfolio claims 12 projects and Alerts claims 128.
-   Both are fully populated so the pagers have real pages behind them.
-6. **Support** — linked from every screen but never mocked up; a plain
-   placeholder page keeps the link from dead-ending.
-
