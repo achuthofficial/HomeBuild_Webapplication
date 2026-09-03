@@ -8,14 +8,20 @@ import FilterSelect from '@/components/ui/FilterSelect'
 import StatusDot from '@/components/ui/StatusDot'
 import AvatarStack from '@/components/ui/AvatarStack'
 import Pagination from '@/components/ui/Pagination'
+import QueryBoundary, { Skeleton } from '@/components/ui/QueryBoundary'
 import { estDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
-import { projects, projectFilters, PROJECTS_PER_PAGE } from '@/data/projects'
+import { useQuery } from '@/hooks/useQuery'
+import { listProjects, listProjectFilters } from '@/api/projects'
 
+const PROJECTS_PER_PAGE = 6
+
+/* Portfolio filter labels map onto the timeline_status column. */
 const statusMatch = {
-  'On Track': 'active',
+  'On Track': 'on_track',
   Delayed: 'delayed',
-  'At Risk': 'at-risk',
+  'At Risk': 'at_risk',
+  Ahead: 'ahead',
 }
 
 export default function Projects() {
@@ -27,15 +33,27 @@ export default function Projects() {
   const [manager, setManager] = useState('All Managers')
   const [page, setPage] = useState(1)
 
+  const projectsQuery = useQuery(() => listProjects(), [])
+  const filtersQuery = useQuery(() => listProjectFilters(), [])
+
+  const projects = projectsQuery.data ?? []
+  const projectFilters = filtersQuery.data ?? {
+    status: ['All Projects'],
+    city: ['All Locations'],
+    manager: ['All Managers'],
+  }
+
+  /* Filtering stays client-side: the portfolio is small enough to hold in
+     memory, and it keeps the three dropdowns instant. */
   const filtered = useMemo(
     () =>
       projects.filter(
         (p) =>
-          (status === 'All Projects' || p.status === statusMatch[status]) &&
+          (status === 'All Projects' || p.timelineKey === statusMatch[status]) &&
           (city === 'All Locations' || p.city === city) &&
           (manager === 'All Managers' || p.manager === manager),
       ),
-    [status, city, manager],
+    [projects, status, city, manager],
   )
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PROJECTS_PER_PAGE))
@@ -53,7 +71,11 @@ export default function Projects() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', to: '/dashboard' }, { label: 'Active Projects' }]}
         title="Project Portfolio"
-        subtitle={`Manage and track progress across ${projects.length} active construction sites.`}
+        subtitle={
+          projectsQuery.isLoading
+            ? 'Loading your portfolio…'
+            : `Manage and track progress across ${projects.length} construction sites.`
+        }
       />
 
       <div className="mb-5 flex flex-wrap items-center gap-2.5">
@@ -90,6 +112,30 @@ export default function Projects() {
         </button>
       </div>
 
+      <QueryBoundary
+        isLoading={projectsQuery.isLoading}
+        error={projectsQuery.error}
+        data={projects}
+        onRetry={projectsQuery.refetch}
+        emptyTitle="No projects yet"
+        emptyBody="Create your first project to start tracking it here."
+        skeleton={
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 6 }, (_, i) => (
+              <Card key={i} className="p-5">
+                <Skeleton className="h-4 w-2/3" />
+                <Skeleton className="mt-2 h-3 w-1/2" />
+                <Skeleton className="mt-5 h-px w-full" />
+                <div className="mt-4 grid grid-cols-2 gap-4">
+                  <Skeleton className="h-8" />
+                  <Skeleton className="h-8" />
+                </div>
+                <Skeleton className="mt-5 h-6 w-24" />
+              </Card>
+            ))}
+          </div>
+        }
+      >
       {visible.length === 0 ? (
         <Card className="p-12 text-center">
           <p className="text-[14px] font-semibold text-ink">No projects match</p>
@@ -165,11 +211,17 @@ export default function Projects() {
         </div>
       )}
 
+      </QueryBoundary>
+
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <p className="text-[12px] text-ink-3">
+          {projectsQuery.isLoading || projectsQuery.error ? null : (
+            <>
           Showing {filtered.length === 0 ? 0 : start + 1} to{' '}
           {Math.min(start + PROJECTS_PER_PAGE, filtered.length)} of{' '}
           {filtered.length} Projects
+            </>
+          )}
         </p>
         <Pagination
           page={safePage}

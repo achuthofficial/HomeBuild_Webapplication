@@ -22,7 +22,10 @@ import { cn } from '@/lib/cn'
 import { useAuth } from '@/context/AuthContext'
 import { useTheme } from '@/context/ThemeContext'
 import { useToast } from '@/context/ToastContext'
-import { teamMembers } from '@/data/user'
+import EditProfileModal from '@/components/shared/EditProfileModal'
+import QueryBoundary, { RowSkeleton } from '@/components/ui/QueryBoundary'
+import { useQuery } from '@/hooks/useQuery'
+import { getProfile, listTeamMembers } from '@/api/profiles'
 import { uploadAvatar } from '@/lib/storage'
 import { isStorageConfigured } from '@/lib/supabaseStorage'
 import { onAvatarError } from '@/lib/imageFallback'
@@ -51,6 +54,21 @@ export default function SettingsPage() {
   const [language, setLanguage] = useState(languages[0])
   const [verifying, setVerifying] = useState(false)
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+
+  /* Role, phone and job title live in Supabase — Firebase has nowhere to put
+     them — so the profile card reads from both sources. */
+  const profileQuery = useQuery(
+    () => getProfile(authUser?.uid),
+    [authUser?.uid],
+    { enabled: Boolean(authUser?.uid) },
+  )
+  const teamQuery = useQuery(
+    () => listTeamMembers(authUser?.uid),
+    [authUser?.uid],
+    { enabled: Boolean(authUser?.uid) },
+  )
+  const profile = profileQuery.data
   const avatarInput = useRef(null)
 
   /**
@@ -146,17 +164,15 @@ export default function SettingsPage() {
           </div>
 
           <h1 className="mt-4 text-[17px] font-bold text-ink">{user.name}</h1>
-          <p className="mt-0.5 text-[12.5px] text-ink-3">{user.role}</p>
+          <p className="mt-0.5 text-[12.5px] text-ink-3">
+            {profile?.job_title ?? user.role}
+          </p>
 
           <Button
             variant="outline"
             icon={Pencil}
             className="mt-5 w-full"
-            onClick={() =>
-              toast('Profile editing is not available in this prototype.', {
-                tone: 'info',
-              })
-            }
+            onClick={() => setEditOpen(true)}
           >
             Edit Profile
           </Button>
@@ -259,7 +275,7 @@ export default function SettingsPage() {
               <input
                 id="set-phone"
                 readOnly
-                value={user.phone}
+                value={profile?.phone ?? '—'}
                 className="focus-ring tnum h-9 w-full rounded-[8px] border border-line bg-canvas px-3 text-[13px] text-ink-2"
               />
             </div>
@@ -283,18 +299,23 @@ export default function SettingsPage() {
             </button>
           </div>
 
-          <ul className="mt-4 space-y-2.5">
-            {teamMembers.map((member) => (
+          <div className="mt-4">
+          <QueryBoundary
+            isLoading={teamQuery.isLoading}
+            error={teamQuery.error}
+            data={teamQuery.data}
+            onRetry={teamQuery.refetch}
+            emptyTitle="No other team members"
+            emptyBody="Invite a colleague to see them listed here."
+            skeleton={<RowSkeleton rows={2} />}
+          >
+          <ul className="space-y-2.5">
+            {(teamQuery.data ?? []).map((member) => (
               <li
                 key={member.id}
                 className="flex items-center gap-3 rounded-[10px] border border-line bg-canvas px-3.5 py-3"
               >
-                <img
-                  src={member.avatar}
-                  onError={onAvatarError}
-                  alt=""
-                  className="size-9 shrink-0 rounded-full object-cover"
-                />
+                <Avatar user={member} size={36} />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-semibold text-ink">
                     {member.name}
@@ -315,6 +336,8 @@ export default function SettingsPage() {
               </li>
             ))}
           </ul>
+          </QueryBoundary>
+          </div>
         </Card>
 
         <Card className="p-5">
@@ -416,6 +439,16 @@ export default function SettingsPage() {
       </div>
 
       {/* ---------------- invite dialog ---------------- */}
+      <EditProfileModal
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        profile={profile}
+        onSaved={(message) => {
+          toast(message)
+          profileQuery.refetch()
+        }}
+      />
+
       <Modal
         open={inviteOpen}
         onClose={() => setInviteOpen(false)}

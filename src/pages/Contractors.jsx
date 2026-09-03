@@ -10,16 +10,31 @@ import FilterSelect from '@/components/ui/FilterSelect'
 import StarRating from '@/components/ui/StarRating'
 import Sparkline from '@/components/ui/Sparkline'
 import Modal from '@/components/ui/Modal'
+import QueryBoundary, { KpiSkeleton, RowSkeleton } from '@/components/ui/QueryBoundary'
 import { cn } from '@/lib/cn'
 import { useToast } from '@/context/ToastContext'
+import { useQuery } from '@/hooks/useQuery'
 import {
-  contractors,
-  contractorKpis,
+  listContractors,
+  getContractorKpis,
+  listTradeFilters,
   contractorTabs,
-  tradeFilters,
   tradeTones,
-  TOTAL_CONTRACTORS,
-} from '@/data/contractors'
+} from '@/api/contractors'
+
+/** KPI copy stays here; the query supplies only the figures. */
+function buildKpis(k) {
+  return [
+    { id: 'active-workforce', label: 'Active Workforce', value: String(k.activeWorkforce),
+      badge: { label: 'Directory', tone: 'success' }, sub: 'Vetted partners on the platform' },
+    { id: 'avg-performance', label: 'Avg. Performance', value: k.avgPerformance,
+      badge: { label: 'Stable', tone: 'brand' }, sub: 'Based on safety & schedule KPIs' },
+    { id: 'budget-utilization', label: 'Budget Utilization', value: '74%',
+      badge: { label: 'In Review', tone: 'warning' }, sub: 'Allocated this quarter' },
+    { id: 'compliance-rate', label: 'Compliance Rate', value: k.complianceRate,
+      sub: 'Insurance & Permits valid', watermark: true },
+  ]
+}
 
 const badgeTones = {
   success: 'text-success',
@@ -47,20 +62,17 @@ export default function Contractors() {
   const [minRating, setMinRating] = useState(false)
   const [menuFor, setMenuFor] = useState(null)
 
-  const rows = useMemo(
-    () =>
-      contractors.filter((c) => {
-        const tabOk =
-          tab === 'All' ||
-          (tab === 'Internal' && c.kind === 'internal') ||
-          (tab === 'Sub-Contractors' && c.kind === 'sub')
-        const tradeOk =
-          trade === 'All Trades' || c.trade === trade.toUpperCase()
-        const ratingOk = !minRating || c.rating >= 4
-        return tabOk && tradeOk && ratingOk
-      }),
+  /* Filtering happens in the query so the directory can grow past what is
+     reasonable to hold in memory — PRD goal 4 targets 200+ contractors. */
+  const contractorsQuery = useQuery(
+    () => listContractors({ tab, trade, minRating }),
     [tab, trade, minRating],
   )
+  const kpisQuery = useQuery(() => getContractorKpis(), [])
+  const tradesQuery = useQuery(() => listTradeFilters(), [])
+
+  const rows = contractorsQuery.data ?? []
+  const tradeFilters = tradesQuery.data ?? ['All Trades']
 
   return (
     <>
@@ -104,8 +116,22 @@ export default function Contractors() {
         }
       />
 
+      <QueryBoundary
+        isLoading={kpisQuery.isLoading}
+        error={kpisQuery.error}
+        data={kpisQuery.data}
+        onRetry={kpisQuery.refetch}
+        isEmpty={() => false}
+        skeleton={
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 4 }, (_, i) => (
+              <KpiSkeleton key={i} />
+            ))}
+          </div>
+        }
+      >
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {contractorKpis.map((kpi) => (
+        {(kpisQuery.data ? buildKpis(kpisQuery.data) : []).map((kpi) => (
           <Card key={kpi.id} className="relative overflow-hidden p-5">
             <p className="eyebrow">{kpi.label}</p>
             <div className="mt-2.5 flex items-baseline gap-2">
@@ -143,6 +169,7 @@ export default function Contractors() {
           </Card>
         ))}
       </div>
+      </QueryBoundary>
 
       <Card className="mt-4 overflow-hidden">
         <div className="scrollbar-slim overflow-x-auto">
@@ -256,7 +283,23 @@ export default function Contractors() {
                 </tr>
               ))}
 
-              {rows.length === 0 ? (
+              {contractorsQuery.isLoading ? (
+                <tr>
+                  <td colSpan={7} className="px-5 py-6">
+                    <RowSkeleton rows={4} />
+                  </td>
+                </tr>
+              ) : null}
+
+              {!contractorsQuery.isLoading && contractorsQuery.error ? (
+                <tr>
+                  <td colSpan={7} className="px-5 py-12 text-center text-[13px] text-danger">
+                    {contractorsQuery.error}
+                  </td>
+                </tr>
+              ) : null}
+
+              {!contractorsQuery.isLoading && !contractorsQuery.error && rows.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-5 py-14 text-center">
                     <p className="text-[14px] font-semibold text-ink">
@@ -274,8 +317,8 @@ export default function Contractors() {
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3.5">
           <p className="text-[12px] text-ink-3">
-            Showing {rows.length === 0 ? 0 : 1}-{rows.length} of{' '}
-            {TOTAL_CONTRACTORS} contractors
+            Showing {rows.length === 0 ? 0 : 1}-{rows.length} of {rows.length}{' '}
+            contractors
           </p>
           <div className="flex gap-2">
             <Button

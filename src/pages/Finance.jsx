@@ -10,15 +10,39 @@ import Modal from '@/components/ui/Modal'
 import DonutChart from '@/components/charts/DonutChart'
 import AreaTrend from '@/components/charts/AreaTrend'
 import { cn } from '@/lib/cn'
+import QueryBoundary, { KpiSkeleton, Skeleton, RowSkeleton } from '@/components/ui/QueryBoundary'
 import { rupees, longDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
+import { useQuery } from '@/hooks/useQuery'
+import { Wallet, Banknote, PiggyBank } from 'lucide-react'
 import {
-  financeKpis,
-  budgetTrend,
-  trendRanges,
-  categoryBreakdown,
-  milestonePayments,
-} from '@/data/finance'
+  getPrimaryProjectId,
+  getFinanceSummary,
+  getBudgetTrend,
+  getCostCategories,
+  listMilestones,
+} from '@/api/finance'
+
+export const trendRanges = ['Last 6 Months', 'Last 12 Months', 'Year to Date']
+
+/** How many months of spend each range asks the query for. */
+const RANGE_MONTHS = {
+  'Last 6 Months': 6,
+  'Last 12 Months': 12,
+  'Year to Date': new Date().getMonth() + 1,
+}
+
+/** KPI cards from the summary. Copy and icons stay client-side. */
+function buildKpis(s) {
+  return [
+    { id: 'total-budget', label: 'Total Budget', value: s.total,
+      delta: 2.4, icon: Wallet, iconTone: 'brand' },
+    { id: 'budget-consumed', label: 'Budget Consumed', value: s.consumed,
+      note: `${s.consumedPct}% Used`, icon: Banknote, iconTone: 'warning' },
+    { id: 'remaining', label: 'Remaining', value: s.remaining,
+      delta: -1.2, icon: PiggyBank, iconTone: 'violet' },
+  ]
+}
 
 /* Tile tints sampled from the mockup: #D8E2FF / #FEF5E7 / #F3EFFE. */
 const iconTones = {
@@ -80,6 +104,32 @@ export default function Finance() {
   const [invoiceOpen, setInvoiceOpen] = useState(false)
   const [menuFor, setMenuFor] = useState(null)
 
+  /* The finance screen is per-project. Resolve which project first, then fetch
+     its figures — the dependent queries stay disabled until it lands. */
+  const projectQuery = useQuery(() => getPrimaryProjectId(), [])
+  const projectId = projectQuery.data?.id ?? null
+
+  const summary = useQuery(
+    () => getFinanceSummary(projectId),
+    [projectId],
+    { enabled: Boolean(projectId) },
+  )
+  const trend = useQuery(
+    () => getBudgetTrend(projectId, RANGE_MONTHS[range] ?? 8),
+    [projectId, range],
+    { enabled: Boolean(projectId) },
+  )
+  const categories = useQuery(
+    () => getCostCategories(projectId),
+    [projectId],
+    { enabled: Boolean(projectId) },
+  )
+  const milestones = useQuery(
+    () => listMilestones(projectId),
+    [projectId],
+    { enabled: Boolean(projectId) },
+  )
+
   return (
     <>
       <PageHeader
@@ -105,11 +155,26 @@ export default function Finance() {
         }
       />
 
-      <div className="grid gap-4 md:grid-cols-3">
-        {financeKpis.map((kpi) => (
-          <FinanceKpi key={kpi.id} {...kpi} />
-        ))}
-      </div>
+      <QueryBoundary
+        isLoading={projectQuery.isLoading || summary.isLoading}
+        error={projectQuery.error ?? summary.error}
+        data={summary.data}
+        onRetry={summary.refetch}
+        isEmpty={() => false}
+        skeleton={
+          <div className="grid gap-4 md:grid-cols-3">
+            {Array.from({ length: 3 }, (_, i) => (
+              <KpiSkeleton key={i} />
+            ))}
+          </div>
+        }
+      >
+        <div className="grid gap-4 md:grid-cols-3">
+          {(summary.data ? buildKpis(summary.data) : []).map((kpi) => (
+            <FinanceKpi key={kpi.id} {...kpi} />
+          ))}
+        </div>
+      </QueryBoundary>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <Card className="p-5">
@@ -126,14 +191,38 @@ export default function Finance() {
             }
           />
           <div className="mt-5">
-            <AreaTrend data={budgetTrend} />
+            {projectQuery.isLoading || trend.isLoading ? (
+              <Skeleton className="h-[190px] w-full" />
+            ) : projectQuery.error ?? trend.error ? (
+              <p className="py-16 text-center text-[13px] text-danger">
+                {projectQuery.error ?? trend.error}
+              </p>
+            ) : (trend.data?.length ?? 0) < 2 ? (
+              <p className="py-16 text-center text-[13px] text-ink-2">
+                Not enough spend recorded yet to draw a trend.
+              </p>
+            ) : (
+              <AreaTrend data={trend.data} />
+            )}
           </div>
         </Card>
 
         <Card className="p-5">
           <CardHeader title="Category Breakdown" />
           <div className="mt-5">
-            <DonutChart data={categoryBreakdown} />
+            {projectQuery.isLoading || categories.isLoading ? (
+              <Skeleton className="mx-auto h-[156px] w-[156px] rounded-full" />
+            ) : projectQuery.error ?? categories.error ? (
+              <p className="py-10 text-center text-[13px] text-danger">
+                {projectQuery.error ?? categories.error}
+              </p>
+            ) : (categories.data?.length ?? 0) === 0 ? (
+              <p className="py-10 text-center text-[13px] text-ink-2">
+                No cost categories recorded.
+              </p>
+            ) : (
+              <DonutChart data={categories.data} />
+            )}
           </div>
         </Card>
       </div>
@@ -171,7 +260,7 @@ export default function Finance() {
               </tr>
             </thead>
             <tbody>
-              {milestonePayments.map((row) => (
+              {(milestones.data ?? []).map((row) => (
                 <tr
                   key={row.id}
                   className="border-b border-line last:border-b-0 transition-colors hover:bg-canvas/60"
@@ -242,7 +331,7 @@ export default function Finance() {
               id="inv-ms"
               className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px]"
             >
-              {milestonePayments.map((m) => (
+              {(milestones.data ?? []).map((m) => (
                 <option key={m.id}>{m.milestone}</option>
               ))}
             </select>

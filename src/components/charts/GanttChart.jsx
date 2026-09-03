@@ -1,14 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronRight, ZoomIn, ZoomOut } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import Chip from '@/components/ui/Chip'
-import {
-  scheduleGroups,
-  scheduleMonths,
-  ganttLegend,
-  todayMarker,
-  TOTAL_WEEKS,
-} from '@/data/schedule'
+import { ganttLegend, todayMarker } from '@/data/schedule'
+import { TOTAL_WEEKS } from '@/api/schedule'
 
 const barTones = {
   success: 'bg-success',
@@ -60,10 +55,15 @@ function Bar({ bar, forecast, flag }) {
   )
 }
 
-export default function GanttChart({ onTaskClick }) {
-  const [open, setOpen] = useState(() =>
-    Object.fromEntries(scheduleGroups.map((g) => [g.id, g.defaultOpen])),
-  )
+export default function GanttChart({ groups = [], months = [], onTaskClick }) {
+  /* Seeded from the data, and re-seeded when the group set changes — a lazy
+     initialiser alone would keep the first project's open/closed state after
+     navigating to another. */
+  const [open, setOpen] = useState({})
+
+  useEffect(() => {
+    setOpen(Object.fromEntries(groups.map((g) => [g.id, g.defaultOpen])))
+  }, [groups])
   const [zoom, setZoom] = useState(1)
 
   const toggle = (id) => setOpen((prev) => ({ ...prev, [id]: !prev[id] }))
@@ -81,7 +81,7 @@ export default function GanttChart({ onTaskClick }) {
 
             <div className="relative flex-1">
               <div className="flex">
-                {scheduleMonths.map((month) => (
+                {months.map((month) => (
                   <div
                     key={month.label}
                     className="flex-1 border-r border-line py-2 text-center last:border-r-0"
@@ -93,7 +93,7 @@ export default function GanttChart({ onTaskClick }) {
                 ))}
               </div>
               <div className="flex border-t border-line">
-                {scheduleMonths.flatMap((m) => m.weeks).map((week) => (
+                {months.flatMap((m) => m.weeks).map((week) => (
                   <div
                     key={week}
                     className="flex-1 border-r border-line py-1.5 text-center last:border-r-0"
@@ -123,7 +123,7 @@ export default function GanttChart({ onTaskClick }) {
               </span>
             </div>
 
-            {scheduleGroups.map((group) => (
+            {groups.map((group) => (
               <div key={group.id}>
                 {/* group row */}
                 <div className="flex border-b border-line">

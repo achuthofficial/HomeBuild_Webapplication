@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react'
 import {
+  EmailAuthProvider,
   createUserWithEmailAndPassword,
   getRedirectResult,
   onAuthStateChanged,
@@ -16,12 +17,18 @@ import {
   signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
+  reauthenticateWithCredential,
+  reauthenticateWithPopup,
   signOut as fbSignOut,
+  updatePassword as fbUpdatePassword,
   updateProfile,
+  verifyBeforeUpdateEmail,
 } from 'firebase/auth'
 
 import { auth, providers, isFirebaseConfigured } from '@/lib/firebase'
 import { demoProfile } from '@/data/user'
+import { ensureProfile } from '@/api/profiles'
+import { isDataConfigured } from '@/api/client'
 
 const AuthContext = createContext(null)
 
@@ -164,6 +171,20 @@ export function AuthProvider({ children }) {
         if (!mounted.current) return
         setUser(nextUser)
         setStatus(nextUser ? AUTH_STATUS.authed : AUTH_STATUS.anon)
+
+        /* Give a new account a profile row so role, phone and job title have
+           somewhere to live. Fire-and-forget: a failure here must never block
+           sign-in, and the Settings screen surfaces it if it matters. */
+        if (nextUser && isDataConfigured) {
+          ensureProfile({
+            uid: nextUser.uid,
+            fullName: nextUser.displayName,
+            email: nextUser.email,
+            avatarUrl: nextUser.photoURL,
+          }).catch((error) =>
+            console.error('[auth] could not sync profile row', error),
+          )
+        }
       },
       (error) => {
         console.error('[auth] state listener failed', error)
@@ -282,6 +303,99 @@ export function AuthProvider({ children }) {
   }, [])
 
   /**
+   * Re-authenticates before a sensitive change.
+   *
+   * Firebase rejects email and password changes on a session older than a few
+   * minutes with `auth/requires-recent-login`. Rather than dumping the user
+   * back at the sign-in screen and losing their edits, prove identity in place:
+   * a password for email accounts, a provider popup for Google or Apple.
+   */
+  const reauthenticate = useCallback(async (currentPassword) => {
+    const current = auth.currentUser
+    if (!current) return { error: 'You are not signed in.' }
+
+    const providerId = current.providerData?.[0]?.providerId ?? 'password'
+
+    try {
+      if (providerId === 'password') {
+        if (!currentPassword) {
+          return { error: 'Enter your current password to confirm this change.' }
+        }
+        const credential = EmailAuthProvider.credential(
+          current.email,
+          currentPassword,
+        )
+        await reauthenticateWithCredential(current, credential)
+      } else {
+        /* Google / Apple: bounce through the provider rather than asking for a
+           password the account does not have. */
+        const provider = providers[providerId.replace('.com', '')]
+        if (!provider) {
+          return { error: `Cannot re-authenticate a ${providerId} account here.` }
+        }
+        await reauthenticateWithPopup(current, provider)
+      }
+      return { error: null }
+    } catch (error) {
+      if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        return { error: 'That password is not correct.' }
+      }
+      return { error: readableError(error) }
+    }
+  }, [])
+
+  /** Display name — no re-authentication required. */
+  const updateDisplayName = useCallback(async (displayName) => {
+    if (!auth.currentUser) return { error: 'You are not signed in.' }
+    try {
+      await updateProfile(auth.currentUser, { displayName })
+    } catch (error) {
+      return { error: readableError(error) }
+    }
+    if (mounted.current) setUser({ ...auth.currentUser })
+    return { error: null }
+  }, [])
+
+  /**
+   * Email change.
+   *
+   * Uses verifyBeforeUpdateEmail rather than updateEmail: the address only
+   * changes once the user clicks the link sent to the NEW address, so a typo
+   * cannot lock them out of their own account.
+   */
+  const updateEmailAddress = useCallback(
+    async (newEmail, currentPassword) => {
+      const { error: reauthError } = await reauthenticate(currentPassword)
+      if (reauthError) return { error: reauthError }
+
+      try {
+        await verifyBeforeUpdateEmail(auth.currentUser, newEmail, {
+          url: actionUrl(),
+        })
+      } catch (error) {
+        return { error: readableError(error) }
+      }
+      return { error: null, pendingVerification: true }
+    },
+    [reauthenticate],
+  )
+
+  const changePassword = useCallback(
+    async (newPassword, currentPassword) => {
+      const { error: reauthError } = await reauthenticate(currentPassword)
+      if (reauthError) return { error: reauthError }
+
+      try {
+        await fbUpdatePassword(auth.currentUser, newPassword)
+      } catch (error) {
+        return { error: readableError(error) }
+      }
+      return { error: null }
+    },
+    [reauthenticate],
+  )
+
+  /**
    * Points the profile at a newly uploaded avatar.
    *
    * With no user table of our own, Firebase's photoURL IS the store — writing
@@ -345,6 +459,10 @@ export function AuthProvider({ children }) {
       resendVerification,
       refreshUser,
       setAvatarUrl,
+      updateDisplayName,
+      updateEmailAddress,
+      changePassword,
+      reauthenticate,
       signOut,
     }),
     [
@@ -358,6 +476,10 @@ export function AuthProvider({ children }) {
       resendVerification,
       refreshUser,
       setAvatarUrl,
+      updateDisplayName,
+      updateEmailAddress,
+      changePassword,
+      reauthenticate,
       signOut,
     ],
   )

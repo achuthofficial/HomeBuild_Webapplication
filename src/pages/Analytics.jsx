@@ -7,15 +7,34 @@ import Button from '@/components/ui/Button'
 import Chip from '@/components/ui/Chip'
 import FilterSelect from '@/components/ui/FilterSelect'
 import Pagination from '@/components/ui/Pagination'
+import QueryBoundary, { KpiSkeleton, RowSkeleton } from '@/components/ui/QueryBoundary'
 import { cn } from '@/lib/cn'
+import { longDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
+import { useQuery } from '@/hooks/useQuery'
 import {
-  alerts,
-  alertKpis,
+  listAlerts,
+  getAlertKpis,
+  acknowledgeAlert,
   severityFilters,
   statusFilters,
   ALERTS_PER_PAGE,
-} from '@/data/alerts'
+} from '@/api/alerts'
+import { TriangleAlert, Zap, ShieldCheck, Timer } from 'lucide-react'
+
+/** KPI presentation stays client-side; the query returns only the numbers. */
+function buildKpis(k) {
+  return [
+    { id: 'active-critical', label: 'Active Critical', value: String(k.activeCritical),
+      sub: 'Open and unresolved', subIcon: 'trend', icon: TriangleAlert, iconTone: 'danger' },
+    { id: 'medium-risks', label: 'Medium Risks', value: String(k.mediumRisks),
+      sub: 'Stable monitoring', icon: Zap, iconTone: 'warning' },
+    { id: 'ai-confidence', label: 'AI Confidence', value: k.aiConfidence,
+      sub: 'Mean across open alerts', subTone: 'success', icon: ShieldCheck, iconTone: 'success' },
+    { id: 'avg-resolution', label: 'Avg Resolution', value: '2.4h',
+      sub: 'Target: < 4h', icon: Timer, iconTone: 'brand' },
+  ]
+}
 
 /* Tile tints sampled from the mockup: #FFF4F3 / #FEF5E7 / #E7F8F2. */
 const iconTones = {
@@ -51,22 +70,42 @@ export default function Analytics() {
   const [status, setStatus] = useState('Active Only')
   const [page, setPage] = useState(1)
 
-  const filtered = useMemo(
-    () =>
-      alerts.filter((a) => {
-        const severityOk = severity === 'All Levels' || a.severity === severity
-        const statusOk =
-          status === 'All Statuses' ||
-          (status === 'Active Only' ? !a.resolved : a.resolved)
-        return severityOk && statusOk
-      }),
-    [severity, status],
+  /* Filtering and paging happen in the query, not the browser: there are 128
+     seeded alerts and the CV pipeline adds more, so fetching them all to slice
+     ten rows would not hold up. */
+  const alertsQuery = useQuery(
+    () => listAlerts({ severity, status, page }),
+    [severity, status, page],
   )
+  const kpisQuery = useQuery(() => getAlertKpis(), [])
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / ALERTS_PER_PAGE))
+  const visible = alertsQuery.data?.alerts ?? []
+  const total = alertsQuery.data?.total ?? 0
+  const totalPages = alertsQuery.data?.totalPages ?? 1
   const safePage = Math.min(page, totalPages)
   const start = (safePage - 1) * ALERTS_PER_PAGE
-  const visible = filtered.slice(start, start + ALERTS_PER_PAGE)
+
+  /* Optimistic acknowledge: flip the row immediately, roll back on failure. */
+  const onAcknowledge = async (alert) => {
+    const { error } = await acknowledgeAlert(alert.id).then(
+      () => ({ error: null }),
+      (e) => ({ error: e.message }),
+    )
+    if (error) {
+      toast(error, { tone: 'info' })
+      return
+    }
+    toast(`“${alert.type}” acknowledged.`)
+    alertsQuery.refetch()
+    kpisQuery.refetch()
+  }
+
+  /* Changing a filter must return to page 1, or a narrow filter can land on
+     a page that no longer exists. */
+  const onFilter = (setter) => (value) => {
+    setter(value)
+    setPage(1)
+  }
 
   return (
     <>
@@ -93,8 +132,22 @@ export default function Analytics() {
         }
       />
 
+      <QueryBoundary
+        isLoading={kpisQuery.isLoading}
+        error={kpisQuery.error}
+        data={kpisQuery.data}
+        onRetry={kpisQuery.refetch}
+        isEmpty={() => false}
+        skeleton={
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 4 }, (_, i) => (
+              <KpiSkeleton key={i} />
+            ))}
+          </div>
+        }
+      >
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {alertKpis.map((kpi) => {
+        {(kpisQuery.data ? buildKpis(kpisQuery.data) : []).map((kpi) => {
           const Icon = kpi.icon
           return (
             <Card key={kpi.id} className="p-4">
@@ -126,6 +179,7 @@ export default function Analytics() {
           )
         })}
       </div>
+      </QueryBoundary>
 
       <Card className="mt-4 overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
@@ -134,27 +188,20 @@ export default function Analytics() {
               label="Severity"
               value={severity}
               options={severityFilters}
-              onChange={(v) => {
-                setSeverity(v)
-                setPage(1)
-              }}
+              onChange={onFilter(setSeverity)}
             />
             <FilterSelect
               label="Status"
               value={status}
               options={statusFilters}
-              onChange={(v) => {
-                setStatus(v)
-                setPage(1)
-              }}
+              onChange={onFilter(setStatus)}
             />
           </div>
 
           <div className="flex items-center gap-3">
             <p className="tnum text-[12px] text-ink-3">
-              Showing {filtered.length === 0 ? 0 : start + 1}-
-              {Math.min(start + ALERTS_PER_PAGE, filtered.length)} of{' '}
-              {filtered.length} alerts
+              Showing {total === 0 ? 0 : start + 1}-
+              {Math.min(start + ALERTS_PER_PAGE, total)} of {total} alerts
             </p>
           </div>
         </div>
@@ -221,24 +268,46 @@ export default function Analytics() {
                   </td>
 
                   <td className="px-5 py-4 text-[12.5px] text-ink-3">
-                    {alert.detected}
+                    {longDate(alert.detected)}
                   </td>
 
                   <td className="px-5 py-4">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        toast(`“${alert.type}” acknowledged.`)
-                      }
-                      className="focus-ring rounded text-[12px] font-semibold text-brand-ink hover:underline"
-                    >
-                      Acknowledge
-                    </button>
+                    {alert.status === 'new' ? (
+                      <button
+                        type="button"
+                        onClick={() => onAcknowledge(alert)}
+                        className="focus-ring rounded text-[12px] font-semibold text-brand-ink hover:underline"
+                      >
+                        Acknowledge
+                      </button>
+                    ) : (
+                      <span className="text-[12px] capitalize text-ink-4">
+                        {alert.status.replace('_', ' ')}
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+
+          {alertsQuery.isLoading ? (
+            <div className="px-5 py-6">
+              <RowSkeleton rows={5} />
+            </div>
+          ) : null}
+
+          {!alertsQuery.isLoading && alertsQuery.error ? (
+            <p className="px-5 py-8 text-center text-[13px] text-danger">
+              {alertsQuery.error}
+            </p>
+          ) : null}
+
+          {!alertsQuery.isLoading && !alertsQuery.error && visible.length === 0 ? (
+            <p className="px-5 py-10 text-center text-[13px] text-ink-2">
+              No alerts match these filters.
+            </p>
+          ) : null}
         </div>
 
         <div className="flex justify-center border-t border-line px-5 py-3.5">

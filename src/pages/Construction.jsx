@@ -12,15 +12,13 @@ import Modal from '@/components/ui/Modal'
 import { cn } from '@/lib/cn'
 import { longDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
-import {
-  feedEntries,
-  aiInsights,
-  activityBreakdown,
-  feedFilters,
-} from '@/data/siteFeed'
+import { aiInsights, activityBreakdown } from '@/data/siteFeed'
+import QueryBoundary, { RowSkeleton } from '@/components/ui/QueryBoundary'
+import { useQuery } from '@/hooks/useQuery'
+import { listFeedEntries, listFeedCategories, attachPhoto } from '@/api/siteFeed'
 import { onImageError } from '@/lib/imageFallback'
 import { useAuth } from '@/context/AuthContext'
-import { uploadSitePhoto, listSitePhotos } from '@/lib/storage'
+import { uploadSitePhoto } from '@/lib/storage'
 import { isStorageConfigured } from '@/lib/supabaseStorage'
 
 const noteRules = {
@@ -42,26 +40,17 @@ export default function Construction() {
   const [updateOpen, setUpdateOpen] = useState(false)
   const [lightbox, setLightbox] = useState(null)
 
-  /* Photos uploaded against each feed entry, keyed by entry id. There is no
-     database, so Storage itself is the index: files live under a per-entry
-     prefix and are listed back on mount. */
-  const [uploaded, setUploaded] = useState({})
   const [uploadingFor, setUploadingFor] = useState(null)
   const fileInput = useRef(null)
   /* Which entry the hidden file input is currently acting for. */
   const pendingEntry = useRef(null)
 
-  const loadPhotos = useCallback(async (entryId) => {
-    const { data } = await listSitePhotos(entryId)
-    setUploaded((prev) => ({ ...prev, [entryId]: data }))
-  }, [])
-
-  useEffect(() => {
-    if (!isStorageConfigured || !authUser) return
-    /* Signed URLs are per-request, so this runs on mount rather than being
-       cached across sessions. */
-    feedEntries.forEach((entry) => loadPhotos(entry.id))
-  }, [authUser, loadPhotos])
+  /* Photos now come back with the feed itself — they are rows in
+     site_update_photos, signed in one batch, rather than being inferred from
+     storage prefixes. */
+  const feed = useQuery(() => listFeedEntries({ category: filter }), [filter])
+  const categories = useQuery(() => listFeedCategories(), [])
+  const feedFilters = categories.data ?? ['All Activity']
 
   const openPicker = (entryId) => {
     if (!isStorageConfigured) {
@@ -83,25 +72,37 @@ export default function Construction() {
     if (!file || !entryId) return
 
     setUploadingFor(entryId)
-    const { error } = await uploadSitePhoto(file, entryId, authUser?.uid)
-    setUploadingFor(null)
+    const { data, error } = await uploadSitePhoto(file, entryId, authUser?.uid)
 
     if (error) {
+      setUploadingFor(null)
       toast(error, { tone: 'info' })
       return
     }
-    /* Re-list rather than appending, so ordering and signed URLs come from
-       one source instead of drifting between them. */
-    await loadPhotos(entryId)
+
+    /* The file is in the bucket; record it against the update so it has an
+       uploader and a caption slot rather than living as an orphan object. */
+    try {
+      await attachPhoto({
+        siteUpdateId: entryId,
+        storagePath: data.path,
+        uploadedBy: authUser?.uid,
+      })
+    } catch (failure) {
+      setUploadingFor(null)
+      toast(`Uploaded, but not linked to the update: ${failure.message}`, {
+        tone: 'info',
+      })
+      return
+    }
+
+    setUploadingFor(null)
+    await feed.refetch()
     toast('Photo added to the site feed.')
   }
 
-  const entries =
-    filter === 'All Activity'
-      ? feedEntries
-      : feedEntries.filter(
-          (e) => e.chip.label.toLowerCase() === filter.toLowerCase(),
-        )
+  /* Filtering is done in the query, so this is just the result. */
+  const entries = feed.data ?? []
 
   return (
     <>
@@ -144,6 +145,15 @@ export default function Construction() {
         tabIndex={-1}
       />
 
+      <QueryBoundary
+        isLoading={feed.isLoading}
+        error={feed.error}
+        data={entries}
+        onRetry={feed.refetch}
+        emptyTitle="No entries for this filter"
+        emptyBody="Switch back to All Activity to see the full feed."
+        skeleton={<RowSkeleton rows={3} />}
+      >
       <ol className="space-y-4">
             {entries.map((entry) => (
               <li key={entry.id} className="relative pl-7">
@@ -194,39 +204,18 @@ export default function Construction() {
                   <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                     {entry.photos.map((photo, i) => (
                       <button
-                        key={photo + i}
-                        type="button"
-                        onClick={() => setLightbox(photo)}
-                        className="focus-ring aspect-[4/3] overflow-hidden rounded-[8px]"
-                      >
-                        <img
-                          src={photo}
-                          onError={onImageError}
-                          alt={`${entry.title} photo ${i + 1}`}
-                          loading="lazy"
-                          className="size-full object-cover transition-transform duration-300 hover:scale-105"
-                        />
-                      </button>
-                    ))}
-
-                    {/* Real uploads, read back from Storage by entry prefix. */}
-                    {(uploaded[entry.id] ?? []).map((photo) => (
-                      <button
-                        key={photo.path}
+                        key={photo.id}
                         type="button"
                         onClick={() => setLightbox(photo.url)}
-                        className="focus-ring relative aspect-[4/3] overflow-hidden rounded-[8px]"
+                        className="focus-ring aspect-[4/3] overflow-hidden rounded-[8px]"
                       >
                         <img
                           src={photo.url}
                           onError={onImageError}
-                          alt={`${entry.title}, uploaded photo`}
+                          alt={photo.caption ?? `${entry.title} photo ${i + 1}`}
                           loading="lazy"
                           className="size-full object-cover transition-transform duration-300 hover:scale-105"
                         />
-                        <span className="absolute left-1.5 top-1.5 rounded-[4px] bg-ink/70 px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.05em] text-canvas">
-                          New
-                        </span>
                       </button>
                     ))}
 
@@ -251,17 +240,7 @@ export default function Construction() {
               </li>
             ))}
           </ol>
-
-          {entries.length === 0 ? (
-            <Card className="p-12 text-center">
-              <p className="text-[14px] font-semibold text-ink">
-                No entries for this filter
-              </p>
-              <p className="mt-1 text-[13px] text-ink-2">
-                Switch back to All Activity to see the full feed.
-              </p>
-            </Card>
-          ) : null}
+          </QueryBoundary>
         </div>
 
         {/* ---------------- AI insights rail ---------------- */}

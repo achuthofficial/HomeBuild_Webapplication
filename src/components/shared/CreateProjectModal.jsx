@@ -2,7 +2,9 @@ import { useState } from 'react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import { useToast } from '@/context/ToastContext'
-import { projectFilters } from '@/data/projects'
+import { useQuery } from '@/hooks/useQuery'
+import { listProjectFilters, createProject } from '@/api/projects'
+import { useAuth } from '@/context/AuthContext'
 
 const field =
   'focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4'
@@ -11,12 +13,19 @@ const field =
  * "Create New Project" dialog. Nothing is persisted — submitting raises a
  * toast so the primary action in the topbar has a visible outcome.
  */
-export default function CreateProjectModal({ open, onClose }) {
+export default function CreateProjectModal({ open, onClose, onCreated }) {
   const { toast } = useToast()
+  const { authUser } = useAuth()
   const [name, setName] = useState('')
   const [client, setClient] = useState('')
   const [city, setCity] = useState('Bengaluru')
   const [budget, setBudget] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  /* Cities come from the projects already in the database rather than a
+     hard-coded list, so the dropdown reflects where work actually is. */
+  const filters = useQuery(() => listProjectFilters(), [], { enabled: open })
+  const cities = (filters.data?.city ?? ['All Locations']).slice(1)
 
   const reset = () => {
     setName('')
@@ -25,11 +34,30 @@ export default function CreateProjectModal({ open, onClose }) {
     setBudget('')
   }
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault()
-    toast(`“${name || 'Untitled Project'}” initialised. Assign a manager to begin.`)
+    setBusy(true)
+
+    try {
+      await createProject({
+        name,
+        client,
+        city,
+        budget,
+        managerUid: authUser?.uid ?? null,
+      })
+    } catch (error) {
+      setBusy(false)
+      toast(error.message, { tone: 'info' })
+      return
+    }
+
+    setBusy(false)
+    toast(`“${name}” created. Assign a manager to begin.`)
     reset()
     onClose?.()
+    /* Let the portfolio refresh rather than waiting for a reload. */
+    onCreated?.()
   }
 
   return (
@@ -43,8 +71,13 @@ export default function CreateProjectModal({ open, onClose }) {
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" form="create-project-form" type="submit">
-            Create Project
+          <Button
+            variant="primary"
+            form="create-project-form"
+            type="submit"
+            disabled={busy}
+          >
+            {busy ? 'Creating…' : 'Create Project'}
           </Button>
         </>
       }
@@ -88,9 +121,11 @@ export default function CreateProjectModal({ open, onClose }) {
               onChange={(e) => setCity(e.target.value)}
               className={field}
             >
-              {projectFilters.city.slice(1).map((c) => (
-                <option key={c}>{c}</option>
-              ))}
+              {cities.length ? (
+                cities.map((c) => <option key={c}>{c}</option>)
+              ) : (
+                <option>Bengaluru</option>
+              )}
             </select>
           </div>
 

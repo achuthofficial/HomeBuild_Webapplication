@@ -9,14 +9,17 @@ import Segmented from '@/components/ui/Segmented'
 import ProgressBar from '@/components/ui/ProgressBar'
 import Modal from '@/components/ui/Modal'
 import GanttChart from '@/components/charts/GanttChart'
+import QueryBoundary, { Skeleton, RowSkeleton } from '@/components/ui/QueryBoundary'
 import { cn } from '@/lib/cn'
 import { useToast } from '@/context/ToastContext'
+import { useQuery } from '@/hooks/useQuery'
+import { getPrimaryProjectId } from '@/api/finance'
+import { getSchedule } from '@/api/schedule'
 import {
   scheduleViews,
   scheduleHealth,
   workforce,
   timelinePulse,
-  scheduleGroups,
 } from '@/data/schedule'
 
 const pulseDots = {
@@ -26,10 +29,10 @@ const pulseDots = {
 }
 
 /** List and Board fall back to a flat rendering of the same task data. */
-function TaskList() {
+function TaskList({ groups }) {
   return (
     <Card className="divide-y divide-line overflow-hidden">
-      {scheduleGroups.flatMap((group) =>
+      {groups.flatMap((group) =>
         group.tasks.map((task) => (
           <div
             key={task.id}
@@ -49,14 +52,14 @@ function TaskList() {
   )
 }
 
-function TaskBoard() {
+function TaskBoard({ groups }) {
   const columns = [
     { label: 'Done', tone: 'success', match: 'DONE' },
     { label: 'In Progress', tone: 'violet', match: 'IN PROGRESS' },
     { label: 'Blocked', tone: 'danger', match: 'DELAYED' },
     { label: 'Queued', tone: 'neutral', match: 'QUEUED' },
   ]
-  const allTasks = scheduleGroups.flatMap((g) =>
+  const allTasks = groups.flatMap((g) =>
     g.tasks.map((t) => ({ ...t, group: g.name })),
   )
 
@@ -102,6 +105,16 @@ export default function Schedule() {
   const [view, setView] = useState('Gantt')
   const [task, setTask] = useState(null)
 
+  const projectQuery = useQuery(() => getPrimaryProjectId(), [])
+  const projectId = projectQuery.data?.id ?? null
+
+  const schedule = useQuery(
+    () => getSchedule(projectId),
+    [projectId],
+    { enabled: Boolean(projectId) },
+  )
+  const groups = schedule.data?.groups ?? []
+
   return (
     <>
       <PageHeader
@@ -141,9 +154,21 @@ export default function Schedule() {
         }
       />
 
-      {view === 'Gantt' ? <GanttChart onTaskClick={setTask} /> : null}
-      {view === 'List' ? <TaskList /> : null}
-      {view === 'Board' ? <TaskBoard /> : null}
+      <QueryBoundary
+        isLoading={projectQuery.isLoading || schedule.isLoading}
+        error={projectQuery.error ?? schedule.error}
+        data={groups}
+        onRetry={schedule.refetch}
+        emptyTitle="No phases scheduled"
+        emptyBody="Add schedule phases for this project to see the Gantt."
+        skeleton={<Skeleton className="h-[320px] w-full rounded-[12px]" />}
+      >
+        {view === 'Gantt' ? (
+          <GanttChart groups={groups} months={schedule.data?.months ?? []} onTaskClick={setTask} />
+        ) : null}
+        {view === 'List' ? <TaskList groups={groups} /> : null}
+        {view === 'Board' ? <TaskBoard groups={groups} /> : null}
+      </QueryBoundary>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
         {/* ---------------- schedule health ---------------- */}
