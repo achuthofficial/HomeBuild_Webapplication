@@ -56,12 +56,20 @@ const subTones = {
  * Severity rendering follows the mockup exactly: `Critical` is bold plain
  * text with no chip, while Medium and Low get tinted chips with a dot.
  */
+const SEVERITY_TONES = {
+  High: 'danger',
+  Medium: 'warning',
+  Low: 'neutral',
+}
+
 function Severity({ level }) {
   if (level === 'Critical') {
     return <span className="text-[12.5px] font-bold text-ink">Critical</span>
   }
+  /* High previously fell through to `neutral` and rendered identically to
+     Low — the opposite of what the severity is telling you. */
   return (
-    <Chip tone={level === 'Medium' ? 'warning' : 'neutral'} dot uppercase={false}>
+    <Chip tone={SEVERITY_TONES[level] ?? 'neutral'} dot uppercase={false}>
       {level}
     </Chip>
   )

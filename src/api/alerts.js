@@ -10,7 +10,9 @@ import { supabase, unwrap, requireConfigured } from '@/api/client'
 
 export const ALERTS_PER_PAGE = 10
 
-export const severityFilters = ['All Levels', 'Critical', 'Medium', 'Low']
+/* PRD 8.4's full severity vocabulary. `High` was missing here, so an alert
+   the CV pipeline marked High could be stored but never filtered for. */
+export const severityFilters = ['All Levels', 'Critical', 'High', 'Medium', 'Low']
 export const statusFilters = ['Active Only', 'All Statuses', 'Resolved']
 
 /** Statuses that count as still open. */

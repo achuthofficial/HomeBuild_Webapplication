@@ -275,7 +275,8 @@ select
   (array['Scaffolding Gap Detected','PPE Compliance Breach','Formwork Deflection',
          'Curing Duration Shortfall','Site Cleanliness Alert','Crane Load Threshold',
          'Shuttering Misalignment','Water Ingress Detected'])[1 + (n % 8)],
-  (array['Critical','Medium','Low','Medium','Low'])[1 + (n % 5)],
+  -- All four PRD 8.4 levels, so filtering by High returns something.
+  (array['Critical','High','Medium','Low','Medium'])[1 + (n % 5)],
   round((0.70 + (n % 30) * 0.01)::numeric, 3),
   'Automatically detected during routine photo analysis of the uploaded site update.',
   (array['Bay 7, West Elevation','Zone 3, Material Yard','Beam B-12, Level 2',
