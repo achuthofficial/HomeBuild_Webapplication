@@ -840,3 +840,422 @@ create policy "signed-in update contractors" on public.contractors
 drop policy if exists "signed-in insert milestones" on public.milestones;
 create policy "signed-in insert milestones" on public.milestones
   for insert with check (public.is_signed_in());
+
+-- =============================================================================
+-- MULTI-USER SCOPING
+--
+-- Until this section, every signed-in user could read every project. That is
+-- fine for a single-team internal tool and wrong the moment two customers,
+-- or two PMs with different portfolios, use the same deployment.
+--
+-- Access is scoped by PROJECT MEMBERSHIP, not per-user silos. PRD section 4
+-- has three personas who need the SAME project: the homeowner tracking it,
+-- the PM running it, and the site supervisor posting to it. Giving each user
+-- a private world would break the product; what has to be private is one
+-- project from another.
+--
+-- A user reaches a project if they are its manager, its customer, or a
+-- listed member.
+-- =============================================================================
+
+/**
+ * SECURITY DEFINER is load-bearing here, not laziness.
+ *
+ * This function is called from the RLS policy ON project_members. If it ran
+ * as the caller, reading project_members would re-enter that policy, which
+ * calls this function again — infinite recursion, and Postgres rejects the
+ * query. Running as the definer reads the table directly, once.
+ *
+ * It is safe because it takes a project id and returns only a boolean: it
+ * cannot be coaxed into returning rows the caller should not see.
+ */
+create or replace function public.has_project_access(p_project_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.projects p
+    where p.id = p_project_id
+      and (
+        p.manager_uid  = public.firebase_uid()
+        or p.customer_uid = public.firebase_uid()
+        or exists (
+          select 1 from public.project_members m
+          where m.project_id = p.id
+            and m.member_uid = public.firebase_uid()
+        )
+      )
+  )
+$$;
+
+/** Whether the caller may administer a project (add members, change status). */
+create or replace function public.is_project_manager(p_project_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.projects p
+    where p.id = p_project_id and p.manager_uid = public.firebase_uid()
+  )
+$$;
+
+-- -----------------------------------------------------------------------------
+-- projects
+-- -----------------------------------------------------------------------------
+drop policy if exists "signed-in read" on public.projects;
+drop policy if exists "signed-in update projects" on public.projects;
+drop policy if exists "signed-in insert projects" on public.projects;
+
+drop policy if exists "read own projects" on public.projects;
+create policy "read own projects" on public.projects
+  for select using (public.has_project_access(id));
+
+/* Creating: you may insert a project only with yourself as its manager, so a
+   new row cannot be planted in someone else's portfolio. */
+drop policy if exists "create own projects" on public.projects;
+create policy "create own projects" on public.projects
+  for insert with check (manager_uid = public.firebase_uid());
+
+drop policy if exists "update accessible projects" on public.projects;
+create policy "update accessible projects" on public.projects
+  for update using (public.has_project_access(id))
+  with check (public.has_project_access(id));
+
+drop policy if exists "manager deletes project" on public.projects;
+create policy "manager deletes project" on public.projects
+  for delete using (manager_uid = public.firebase_uid());
+
+-- -----------------------------------------------------------------------------
+-- project_members
+-- -----------------------------------------------------------------------------
+drop policy if exists "signed-in read" on public.project_members;
+
+drop policy if exists "read memberships of accessible projects" on public.project_members;
+create policy "read memberships of accessible projects" on public.project_members
+  for select using (public.has_project_access(project_id));
+
+/* Adding members is the manager's job alone.
+
+   An earlier draft of this policy also allowed `member_uid = firebase_uid()`
+   — "you may add yourself" — which is a hole, not a convenience: any user
+   could add themselves to any project id and read it. Project creation does
+   not need it either, because create_project() below runs as definer and
+   inserts the creator's membership itself. */
+drop policy if exists "manager adds members" on public.project_members;
+create policy "manager adds members" on public.project_members
+  for insert with check (public.is_project_manager(project_id));
+
+/* Removal: the manager may remove anyone; anyone may remove themselves. That
+   direction is safe — leaving a project only ever reduces your access. */
+drop policy if exists "manager removes members" on public.project_members;
+create policy "manager removes members" on public.project_members
+  for delete using (
+    public.is_project_manager(project_id)
+    or member_uid = public.firebase_uid()
+  );
+
+-- -----------------------------------------------------------------------------
+-- Everything hanging off a project inherits its scope.
+-- -----------------------------------------------------------------------------
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'floor_plans','site_updates','ai_alerts','milestones',
+    'schedule_phases','budget_entries','cost_categories',
+    'contractor_assignments'
+  ]
+  loop
+    /* Drop BOTH the old open-read policy and this one's own name — without
+       the second, re-running schema.sql fails on "policy already exists". */
+    execute format('drop policy if exists "signed-in read" on public.%I;', t);
+    execute format('drop policy if exists "read via project" on public.%I;', t);
+    execute format(
+      'create policy "read via project" on public.%I
+         for select using (public.has_project_access(project_id));',
+      t
+    );
+  end loop;
+end $$;
+
+/* Writes on child tables, re-scoped from "any signed-in user". */
+drop policy if exists "signed-in update alerts" on public.ai_alerts;
+drop policy if exists "update alerts via project" on public.ai_alerts;
+create policy "update alerts via project" on public.ai_alerts
+  for update using (public.has_project_access(project_id))
+  with check (public.has_project_access(project_id));
+
+drop policy if exists "signed-in update milestones" on public.milestones;
+drop policy if exists "update milestones via project" on public.milestones;
+create policy "update milestones via project" on public.milestones
+  for update using (public.has_project_access(project_id))
+  with check (public.has_project_access(project_id));
+
+drop policy if exists "signed-in insert milestones" on public.milestones;
+drop policy if exists "insert milestones via project" on public.milestones;
+create policy "insert milestones via project" on public.milestones
+  for insert with check (public.has_project_access(project_id));
+
+drop policy if exists "signed-in update phases" on public.schedule_phases;
+drop policy if exists "update phases via project" on public.schedule_phases;
+create policy "update phases via project" on public.schedule_phases
+  for update using (public.has_project_access(project_id))
+  with check (public.has_project_access(project_id));
+
+drop policy if exists "signed-in insert phases" on public.schedule_phases;
+drop policy if exists "insert phases via project" on public.schedule_phases;
+create policy "insert phases via project" on public.schedule_phases
+  for insert with check (public.has_project_access(project_id));
+
+drop policy if exists "insert own site update" on public.site_updates;
+drop policy if exists "insert site update via project" on public.site_updates;
+create policy "insert site update via project" on public.site_updates
+  for insert with check (
+    supervisor_uid = public.firebase_uid()
+    and public.has_project_access(project_id)
+  );
+
+-- Photos: reachable through their update's project.
+drop policy if exists "signed-in read" on public.site_update_photos;
+drop policy if exists "read photos via project" on public.site_update_photos;
+create policy "read photos via project" on public.site_update_photos
+  for select using (
+    exists (
+      select 1 from public.site_updates u
+      where u.id = site_update_id and public.has_project_access(u.project_id)
+    )
+  );
+
+drop policy if exists "insert own photo" on public.site_update_photos;
+drop policy if exists "insert photo via project" on public.site_update_photos;
+create policy "insert photo via project" on public.site_update_photos
+  for insert with check (
+    uploaded_by = public.firebase_uid()
+    and exists (
+      select 1 from public.site_updates u
+      where u.id = site_update_id and public.has_project_access(u.project_id)
+    )
+  );
+
+-- -----------------------------------------------------------------------------
+-- activity_log follows its project. Entries with no project (account-level
+-- actions) are visible only to the person who made them.
+-- -----------------------------------------------------------------------------
+drop policy if exists "signed-in read activity" on public.activity_log;
+drop policy if exists "read activity via project" on public.activity_log;
+create policy "read activity via project" on public.activity_log
+  for select using (
+    (project_id is not null and public.has_project_access(project_id))
+    or (project_id is null and actor_uid = public.firebase_uid())
+  );
+
+-- -----------------------------------------------------------------------------
+-- Deliberately NOT scoped
+--
+-- `profiles` and `contractors` stay readable by any signed-in user. Both are
+-- shared directories: you cannot assign a PM, invite a colleague or pick a
+-- contractor you are unable to see, and a name and trade are not sensitive in
+-- the way a client's budget is. Writes on both remain restricted.
+--
+-- `invitations` likewise: revoking is already limited to the inviter.
+-- -----------------------------------------------------------------------------
+
+-- =============================================================================
+-- Project creation
+--
+-- The insert policy above requires manager_uid = the caller, which is right
+-- for a plain INSERT but breaks a legitimate case: assigning the project to a
+-- different PM. It would also let a creator hand a project away and lose
+-- access to it in the same statement.
+--
+-- This function resolves both. It runs as definer, so it can set any manager,
+-- and it always records the CREATOR as a member — you never lose the project
+-- you just made.
+-- =============================================================================
+create or replace function public.create_project(p_project jsonb)
+returns public.projects
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid text := public.firebase_uid();
+  v_row public.projects;
+  v_manager text;
+begin
+  if v_uid is null then
+    raise exception 'Not signed in';
+  end if;
+
+  if coalesce(trim(p_project ->> 'name'), '') = '' then
+    raise exception 'Project name is required';
+  end if;
+
+  /* Unassigned falls to the creator, so a project is never ownerless. */
+  v_manager := coalesce(nullif(p_project ->> 'manager_uid', ''), v_uid);
+
+  insert into public.projects (
+    name, client_name, customer_uid, manager_uid, status, city,
+    plot_address, plot_lat, plot_lng, plot_length_ft, plot_width_ft,
+    plot_facing, total_floors, bhk_per_floor, budget_total,
+    start_date, expected_completion
+  )
+  values (
+    trim(p_project ->> 'name'),
+    nullif(trim(coalesce(p_project ->> 'client_name', '')), ''),
+    nullif(p_project ->> 'customer_uid', ''),
+    v_manager,
+    coalesce(nullif(p_project ->> 'status', ''), 'lead'),
+    nullif(p_project ->> 'city', ''),
+    nullif(trim(coalesce(p_project ->> 'plot_address', '')), ''),
+    (nullif(p_project ->> 'plot_lat', ''))::numeric,
+    (nullif(p_project ->> 'plot_lng', ''))::numeric,
+    (nullif(p_project ->> 'plot_length_ft', ''))::integer,
+    (nullif(p_project ->> 'plot_width_ft', ''))::integer,
+    nullif(p_project ->> 'plot_facing', ''),
+    nullif(p_project ->> 'total_floors', ''),
+    (nullif(p_project ->> 'bhk_per_floor', ''))::integer,
+    coalesce((nullif(p_project ->> 'budget_total', ''))::bigint, 0),
+    (nullif(p_project ->> 'start_date', ''))::date,
+    (nullif(p_project ->> 'expected_completion', ''))::date
+  )
+  returning * into v_row;
+
+  /* The creator, always. Plus the assigned manager and customer when they are
+     other people, so the project appears in their portfolios too. */
+  insert into public.project_members (project_id, member_uid, role)
+  select v_row.id, uid, role
+  from (values
+    (v_uid, 'creator'),
+    (v_manager, 'manager'),
+    (nullif(p_project ->> 'customer_uid', ''), 'customer')
+  ) as m(uid, role)
+  where uid is not null
+    and exists (select 1 from public.profiles pr where pr.firebase_uid = m.uid)
+  on conflict (project_id, member_uid) do nothing;
+
+  insert into public.activity_log (project_id, actor_uid, entity, entity_id, action, summary)
+  values (v_row.id, v_uid, 'project', v_row.id, 'created',
+          format('Project “%s” created', v_row.name));
+
+  return v_row;
+end;
+$$;
+
+-- =============================================================================
+-- Demo data
+--
+-- seed.sql assigns its projects to placeholder `seed-` profiles, so with the
+-- policies above a real account correctly sees none of them — an empty app on
+-- first sign-in, which looks broken even though it is right.
+--
+-- Call this once to add yourself to the seeded projects:
+--     select public.claim_demo_projects();
+-- =============================================================================
+create or replace function public.claim_demo_projects()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid text := public.firebase_uid();
+  v_count integer;
+begin
+  if v_uid is null then
+    raise exception 'Not signed in';
+  end if;
+
+  insert into public.project_members (project_id, member_uid, role)
+  select p.id, v_uid, 'member'
+  from public.projects p
+  where p.manager_uid like 'seed-%'
+  on conflict (project_id, member_uid) do nothing;
+
+  get diagnostics v_count = row_count;
+
+  insert into public.activity_log (actor_uid, entity, action, summary)
+  values (v_uid, 'account', 'claimed_demo',
+          format('Joined %s demo project(s)', v_count));
+
+  return v_count;
+end;
+$$;
+
+-- =============================================================================
+-- Storage policies, re-scoped
+--
+-- STORAGE_SETUP.md's original site-photos read policy was "any signed-in
+-- user", which is now inconsistent with the table policies above: a user who
+-- cannot see a project could still read its photography by listing the
+-- bucket. Photos are client project data, so they follow the same membership
+-- rule as everything else.
+--
+-- Path shape is  site-photos/<site_update_id>/<uploader_uid>/<file>
+-- so segment 1 identifies the update, and its project decides access.
+-- =============================================================================
+
+drop policy if exists "signed-in users read site photos" on storage.objects;
+create policy "read site photos via project"
+on storage.objects for select
+using (
+  bucket_id = 'site-photos'
+  and exists (
+    select 1 from public.site_updates u
+    where u.id::text = (storage.foldername(name))[1]
+      and public.has_project_access(u.project_id)
+  )
+);
+
+drop policy if exists "users upload their own site photos" on storage.objects;
+create policy "upload site photos via project"
+on storage.objects for insert
+with check (
+  bucket_id = 'site-photos'
+  -- Segment 2 is the uploader: you may only write under your own prefix.
+  and (storage.foldername(name))[2] = public.firebase_uid()
+  and exists (
+    select 1 from public.site_updates u
+    where u.id::text = (storage.foldername(name))[1]
+      and public.has_project_access(u.project_id)
+  )
+);
+
+drop policy if exists "users delete their own site photos" on storage.objects;
+create policy "delete own site photos"
+on storage.objects for delete
+using (
+  bucket_id = 'site-photos'
+  and (storage.foldername(name))[2] = public.firebase_uid()
+);
+
+-- Avatars are unchanged: a public bucket whose URLs live in Firebase profiles.
+-- Re-declared here so all policies are in one file rather than split between
+-- this and STORAGE_SETUP.md.
+drop policy if exists "avatars are readable by anyone" on storage.objects;
+create policy "avatars are readable by anyone"
+on storage.objects for select
+using (bucket_id = 'avatars');
+
+drop policy if exists "users write their own avatar" on storage.objects;
+create policy "users write their own avatar"
+on storage.objects for insert
+with check (
+  bucket_id = 'avatars'
+  and (storage.foldername(name))[1] = public.firebase_uid()
+);
+
+drop policy if exists "users replace their own avatar" on storage.objects;
+create policy "users replace their own avatar"
+on storage.objects for update
+using (
+  bucket_id = 'avatars'
+  and (storage.foldername(name))[1] = public.firebase_uid()
+);

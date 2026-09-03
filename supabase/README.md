@@ -118,14 +118,56 @@ count the same as the structure.
 
 Re-running `schema.sql` is how you upgrade: every statement is idempotent.
 
-## Two things to know before this goes near real customers
+## Who can see what
 
-**Reads are open to any signed-in user.** There is no organisation or
-project-membership table yet, so every authenticated account can read every
-project, alert and site photo. That is correct for an internal single-tenant
-tool and wrong for anything multi-tenant. The place to fix it is the
-`"signed-in read"` policies in `schema.sql` — replace `is_signed_in()` with a
-join against membership.
+Access is scoped by **project membership**, not per-user silos. You reach a
+project if you are its **manager**, its **customer**, or a listed **member** —
+and everything hanging off it (site updates, alerts, milestones, phases,
+budget lines, photos, activity) inherits that scope automatically.
+
+Silos would have been the wrong model. PRD section 4 has three personas who
+need the *same* project: the homeowner tracking it, the PM running it, and the
+supervisor posting to it. What has to be private is one project from another,
+not one person from another.
+
+Two directories stay readable by every signed-in user, deliberately:
+`profiles` and `contractors`. You cannot assign a PM, invite a colleague or
+pick a contractor you are unable to see, and a name and trade are not
+sensitive the way a client's budget is. Writes on both remain restricted.
+
+### Two implementation details that matter
+
+**`has_project_access()` is `SECURITY DEFINER`, and has to be.** It is called
+from the policy *on* `project_members`; running as the caller would re-enter
+that policy, call the function again, and recurse until Postgres rejects the
+query. It takes a project id and returns a boolean, so it cannot be coaxed
+into leaking rows.
+
+**Project creation goes through `create_project()`, not a plain INSERT.** The
+insert policy requires `manager_uid = you`, which is right for the common case
+but blocks assigning the project to a different PM — and would let a creator
+hand a project away and lose access to it in the same statement. The function
+runs as definer, sets any manager, and always records the creator as a member.
+
+### First sign-in looks empty, and that is correct
+
+`seed.sql` assigns its projects to placeholder `seed-` profiles, so a real
+account sees none of them. The Projects screen offers **Join the demo
+projects**, or run it directly:
+
+```sql
+select public.claim_demo_projects();
+```
+
+Delete the seeded profiles once you have real users.
+
+## Still to do before real customers
+
+**There is no organisation layer.** Membership isolates project from project,
+which is the important half, but any signed-in user can still see the full
+people and contractor directories, and invitations are not org-scoped. A
+multi-tenant deployment needs an `organisations` table and a tenant id on
+`profiles`, with the directory policies scoped to it.
 
 **Seeded profiles are placeholders.** Rows prefixed `seed-` exist so team
 stacks and assignments point at something. Real rows are created on first

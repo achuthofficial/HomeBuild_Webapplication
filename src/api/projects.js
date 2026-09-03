@@ -116,9 +116,9 @@ export async function createProject({
   managerUid,
   customerUid,
   status = 'lead',
+  plotAddress,
   plotLat,
   plotLng,
-  plotAddress,
   plotLengthFt,
   plotWidthFt,
   plotFacing,
@@ -130,56 +130,121 @@ export async function createProject({
 }) {
   requireConfigured()
 
-  const row = unwrap(
-    await supabase
-      .from('projects')
-      .insert({
-        name: name.trim(),
-        client_name: client?.trim() || null,
-        city: city || null,
-        budget_total: budget ? Math.round(Number(budget)) : 0,
-        manager_uid: managerUid ?? null,
-        /* PRD 8.1 models Customer as a link to the homeowner's profile, not a
-           name — client_name stays alongside it for the display label on the
-           portfolio card. */
-        customer_uid: customerUid || null,
-        plot_address: plotAddress?.trim() || null,
-        plot_lat: plotLat ? Number(plotLat) : null,
-        plot_lng: plotLng ? Number(plotLng) : null,
-        plot_length_ft: plotLengthFt ? Number(plotLengthFt) : null,
-        plot_width_ft: plotWidthFt ? Number(plotWidthFt) : null,
-        plot_facing: plotFacing || null,
-        total_floors: totalFloors || null,
-        bhk_per_floor: bhkPerFloor ? Number(bhkPerFloor) : null,
-        start_date: startDate || null,
-        expected_completion: expectedCompletion || null,
-        /* PRD 8.1 lifecycle. Defaults to `lead`, but a project migrated from
-           elsewhere may legitimately start further along. */
+  /* Goes through the create_project function rather than a plain insert.
+     The insert policy requires manager_uid = the caller, which would block
+     assigning the project to a different PM — and would let a creator hand a
+     project away and lose access to it in the same statement. The function
+     runs as definer and always records the creator as a member. */
+  const rows = unwrap(
+    await supabase.rpc('create_project', {
+      p_project: {
+        name,
+        client_name: client ?? '',
+        customer_uid: customerUid ?? '',
+        manager_uid: managerUid ?? '',
         status,
-      })
-      .select(PROJECT_SELECT)
-      .single(),
+        city: city ?? '',
+        plot_address: plotAddress ?? '',
+        plot_lat: plotLat ?? '',
+        plot_lng: plotLng ?? '',
+        plot_length_ft: plotLengthFt ?? '',
+        plot_width_ft: plotWidthFt ?? '',
+        plot_facing: plotFacing ?? '',
+        total_floors: totalFloors ?? '',
+        bhk_per_floor: bhkPerFloor ?? '',
+        budget_total: budget ?? '',
+        start_date: startDate ?? '',
+        expected_completion: expectedCompletion ?? '',
+      },
+    }),
   )
 
-  if (seedPhases) {
+  const created = Array.isArray(rows) ? rows[0] : rows
+
+  if (seedPhases && created?.id) {
     /* Non-fatal: a project without phases is still usable, and failing the
        whole creation over the template would be worse than an empty Gantt. */
     try {
-      await seedDefaultPhases(row.id, budget ? Number(budget) : 0)
+      await seedDefaultPhases(created.id, budget ? Number(budget) : 0)
     } catch (error) {
       console.error('[projects] could not seed default phases', error)
     }
   }
 
-  /* The creator is a member, so the project is not team-less on day one. */
-  if (managerUid) {
+  /* The function returns the raw row; re-read through the normal select so
+     the caller gets the same shape as every other project. */
+  return created?.id ? getProject(created.id) : null
+}
+
+/**
+ * Adds the signed-in user to the seeded demo projects.
+ *
+ * seed.sql assigns its projects to placeholder profiles, so with membership
+ * scoping a real account correctly sees none of them — an empty app on first
+ * sign-in, which looks broken even though it is right.
+ */
+export async function claimDemoProjects() {
+  requireConfigured()
+  const count = unwrap(await supabase.rpc('claim_demo_projects'))
+  return typeof count === 'number' ? count : 0
+}
+
+/** Who can see a project, for the member management panel. */
+export async function listProjectMembers(projectId) {
+  requireConfigured()
+  const rows = unwrap(
     await supabase
       .from('project_members')
-      .insert({ project_id: row.id, member_uid: managerUid, role: 'manager' })
-      .then(null, () => {})
-  }
+      .select('member_uid, role, profiles ( full_name, email, avatar_url, role )')
+      .eq('project_id', projectId),
+  )
 
-  return toProject(row)
+  return rows.map((r) => ({
+    uid: r.member_uid,
+    projectRole: r.role,
+    name: r.profiles?.full_name ?? r.member_uid,
+    email: r.profiles?.email,
+    persona: r.profiles?.role,
+    avatar: r.profiles?.avatar_url,
+    initials: (r.profiles?.full_name ?? '?')
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() ?? '')
+      .join(''),
+  }))
+}
+
+/** Grants someone access. Only the project's manager may do this. */
+export async function addProjectMember(projectId, memberUid, role = 'member') {
+  requireConfigured()
+  const { data, error } = await supabase
+    .from('project_members')
+    .insert({ project_id: projectId, member_uid: memberUid, role })
+    .select('member_uid')
+    .single()
+
+  if (error?.code === '23505') {
+    throw new Error('That person is already on this project.')
+  }
+  if (error?.code === '42501') {
+    throw new Error('Only the project manager can add members.')
+  }
+  return unwrap({ data, error })
+}
+
+export async function removeProjectMember(projectId, memberUid) {
+  requireConfigured()
+  const { error } = await supabase
+    .from('project_members')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('member_uid', memberUid)
+
+  if (error?.code === '42501') {
+    throw new Error('Only the project manager can remove members.')
+  }
+  unwrap({ data: null, error })
+  return { memberUid }
 }
 
 /**

@@ -4,20 +4,28 @@ import { PlusCircle, SlidersHorizontal } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
 import Card from '@/components/ui/Card'
+import Button from '@/components/ui/Button'
 import FilterSelect from '@/components/ui/FilterSelect'
 import StatusDot from '@/components/ui/StatusDot'
 import AvatarStack from '@/components/ui/AvatarStack'
 import Pagination from '@/components/ui/Pagination'
-import QueryBoundary, { Skeleton } from '@/components/ui/QueryBoundary'
+import QueryBoundary, { Skeleton, RowSkeleton } from '@/components/ui/QueryBoundary'
 import { estDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
 import { useQuery } from '@/hooks/useQuery'
 import { useAuth } from '@/context/AuthContext'
+import Modal from '@/components/ui/Modal'
+import Avatar from '@/components/ui/Avatar'
 import {
   listProjects,
   listProjectFilters,
   updateProjectProgress,
+  claimDemoProjects,
+  listProjectMembers,
+  addProjectMember,
+  removeProjectMember,
 } from '@/api/projects'
+import { listProfilesByRole } from '@/api/profiles'
 
 const PROJECTS_PER_PAGE = 6
 
@@ -44,6 +52,10 @@ export default function Projects() {
   const { toast } = useToast()
   const { authUser } = useAuth()
   const [savingId, setSavingId] = useState(null)
+  const [teamFor, setTeamFor] = useState(null)
+  const [claiming, setClaiming] = useState(false)
+  const [memberBusy, setMemberBusy] = useState(false)
+  const [addUid, setAddUid] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [advanced, setAdvanced] = useState({
     lifecycle: 'Any',
@@ -100,6 +112,69 @@ export default function Projects() {
   const onFilter = (setter) => (value) => {
     setter(value)
     setPage(1)
+  }
+
+  /* Loaded only when the team sheet opens, keyed on which project. */
+  const members = useQuery(
+    () => listProjectMembers(teamFor.id),
+    [teamFor?.id],
+    { enabled: Boolean(teamFor?.id) },
+  )
+  const directory = useQuery(() => listProfilesByRole(), [], {
+    enabled: Boolean(teamFor?.id),
+  })
+
+  /**
+   * A fresh account sees nothing, because the seeded projects belong to
+   * placeholder profiles. That is correct but indistinguishable from broken,
+   * so the empty state offers a way in.
+   */
+  const claimDemo = async () => {
+    setClaiming(true)
+    try {
+      const count = await claimDemoProjects()
+      toast(
+        count > 0
+          ? `Joined ${count} demo project${count === 1 ? '' : 's'}.`
+          : 'No demo projects left to join.',
+      )
+      projectsQuery.refetch()
+      filtersQuery.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setClaiming(false)
+    }
+  }
+
+  const addMember = async () => {
+    if (!addUid) return
+    setMemberBusy(true)
+    try {
+      await addProjectMember(teamFor.id, addUid)
+      setAddUid('')
+      toast('Member added to the project.')
+      members.refetch()
+      projectsQuery.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setMemberBusy(false)
+    }
+  }
+
+  const removeMember = async (member) => {
+    setMemberBusy(true)
+    try {
+      await removeProjectMember(teamFor.id, member.uid)
+      toast(`${member.name} removed from the project.`)
+      members.refetch()
+      projectsQuery.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setMemberBusy(false)
+    }
   }
 
   /**
@@ -251,7 +326,7 @@ export default function Projects() {
         data={projects}
         onRetry={projectsQuery.refetch}
         emptyTitle="No projects yet"
-        emptyBody="Create your first project to start tracking it here."
+        emptyBody="You only see projects you manage, own, or have been added to. Create one, or join the demo set to look around."
         skeleton={
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 6 }, (_, i) => (
@@ -327,10 +402,23 @@ export default function Projects() {
               </div>
 
               <div className="mt-5 flex items-center justify-between gap-3 pt-1">
-                <AvatarStack
-                  avatars={project.team}
-                  extra={project.extraTeam}
-                />
+                <button
+                  type="button"
+                  onClick={() => setTeamFor(project)}
+                  aria-label={`Manage team on ${project.name}`}
+                  className="focus-ring rounded-full p-0.5 transition-opacity hover:opacity-80"
+                >
+                  {project.team.length || project.extraTeam ? (
+                    <AvatarStack
+                      avatars={project.team}
+                      extra={project.extraTeam}
+                    />
+                  ) : (
+                    <span className="text-[11px] font-semibold text-brand-ink">
+                      + Add team
+                    </span>
+                  )}
+                </button>
                 <span className="text-[10px] font-medium uppercase tracking-[0.06em] text-ink-4">
                   Est: {estDate(project.estimate)}
                 </span>
@@ -360,6 +448,107 @@ export default function Projects() {
       )}
 
       </QueryBoundary>
+
+      {/* Only when genuinely empty — not while a filter happens to match none. */}
+      {!projectsQuery.isLoading &&
+      !projectsQuery.error &&
+      projects.length === 0 ? (
+        <div className="mt-4 text-center">
+          <Button
+            variant="outline"
+            disabled={claiming}
+            onClick={claimDemo}
+          >
+            {claiming ? 'Joining…' : 'Join the demo projects'}
+          </Button>
+        </div>
+      ) : null}
+
+      {/* ---------------- team management ---------------- */}
+      <Modal
+        open={!!teamFor}
+        onClose={() => setTeamFor(null)}
+        title={teamFor ? `Team on ${teamFor.name}` : ''}
+        description="Only these people can see this project."
+      >
+        <div className="space-y-4">
+          <QueryBoundary
+            isLoading={members.isLoading}
+            error={members.error}
+            data={members.data}
+            onRetry={members.refetch}
+            emptyTitle="No members yet"
+            emptyBody="Add a colleague to give them access."
+            skeleton={<RowSkeleton rows={2} />}
+          >
+            <ul className="space-y-2">
+              {(members.data ?? []).map((member) => (
+                <li
+                  key={member.uid}
+                  className="flex items-center gap-3 rounded-[10px] border border-line bg-canvas px-3 py-2.5"
+                >
+                  <Avatar user={member} size={32} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-semibold text-ink">
+                      {member.name}
+                    </p>
+                    <p className="truncate text-[11.5px] capitalize text-ink-3">
+                      {member.projectRole?.replace('_', ' ')}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={memberBusy}
+                    onClick={() => removeMember(member)}
+                    className="focus-ring shrink-0 rounded text-[12px] font-semibold text-danger hover:underline disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </QueryBoundary>
+
+          <div className="border-t border-line pt-4">
+            <label htmlFor="pm-add" className="eyebrow mb-1.5 block">
+              Add someone
+            </label>
+            <div className="flex gap-2">
+              <select
+                id="pm-add"
+                value={addUid}
+                onChange={(e) => setAddUid(e.target.value)}
+                disabled={memberBusy}
+                className="focus-ring h-9 min-w-0 flex-1 rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+              >
+                <option value="">Choose a colleague…</option>
+                {(directory.data ?? [])
+                  .filter(
+                    (person) =>
+                      !(members.data ?? []).some((m) => m.uid === person.uid),
+                  )
+                  .map((person) => (
+                    <option key={person.uid} value={person.uid}>
+                      {person.name}
+                    </option>
+                  ))}
+              </select>
+              <Button
+                variant="primary"
+                onClick={addMember}
+                disabled={memberBusy || !addUid}
+              >
+                Add
+              </Button>
+            </div>
+            {/* The policy allows this only for the manager, so say so before
+                the attempt rather than after it fails. */}
+            <p className="mt-2 text-[11.5px] leading-relaxed text-ink-3">
+              Only the project’s manager can change its team.
+            </p>
+          </div>
+        </div>
+      </Modal>
 
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <p className="text-[12px] text-ink-3">
