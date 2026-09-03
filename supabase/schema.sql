@@ -1259,3 +1259,77 @@ using (
   bucket_id = 'avatars'
   and (storage.foldername(name))[1] = public.firebase_uid()
 );
+
+-- =============================================================================
+-- Design module (PRD 5.1)
+--
+-- 5.1.3 lists ten input parameters. Six already live on `projects` (plot
+-- dimensions, facing, floors, BHK); the four that are design-specific are
+-- added here rather than to projects, because they describe a GENERATION
+-- REQUEST rather than the project itself — you may generate twice with
+-- different budget tiers for the same plot.
+-- =============================================================================
+alter table public.floor_plans
+  add column if not exists parking_spots     integer,
+  add column if not exists architectural_style text,
+  add column if not exists budget_tier       text,
+  add column if not exists vastu_required    boolean default true,
+  add column if not exists extra_spaces      text[],
+  -- The 5.1.8 check results, stored so a plan carries the evidence it was
+  -- valid at generation time rather than being re-derived on every read.
+  add column if not exists validation        jsonb;
+
+/* Selecting a plan is exclusive: PRD 8.1 calls it "the chosen plan", singular.
+   Enforced here rather than in the client so two tabs cannot both win. */
+create or replace function public.select_floor_plan(p_plan_id uuid)
+returns public.floor_plans
+language plpgsql
+security invoker
+as $$
+declare
+  v_row public.floor_plans;
+  v_uid text := public.firebase_uid();
+begin
+  if v_uid is null then
+    raise exception 'Not signed in';
+  end if;
+
+  select * into v_row from public.floor_plans where id = p_plan_id;
+  if not found then
+    raise exception 'Plan not found';
+  end if;
+
+  if not public.has_project_access(v_row.project_id) then
+    raise exception 'No access to this project';
+  end if;
+
+  update public.floor_plans
+  set is_selected = (id = p_plan_id)
+  where project_id = v_row.project_id;
+
+  /* Choosing a plan is what moves a project out of design. */
+  update public.projects
+  set status = case when status in ('lead', 'in_design') then 'active' else status end
+  where id = v_row.project_id;
+
+  insert into public.activity_log (project_id, actor_uid, entity, entity_id, action, summary)
+  values (v_row.project_id, v_uid, 'floor_plan', v_row.id, 'selected',
+          format('Floor plan “%s” selected', v_row.name));
+
+  select * into v_row from public.floor_plans where id = p_plan_id;
+  return v_row;
+end;
+$$;
+
+drop policy if exists "insert plans via project" on public.floor_plans;
+create policy "insert plans via project" on public.floor_plans
+  for insert with check (public.has_project_access(project_id));
+
+drop policy if exists "update plans via project" on public.floor_plans;
+create policy "update plans via project" on public.floor_plans
+  for update using (public.has_project_access(project_id))
+  with check (public.has_project_access(project_id));
+
+drop policy if exists "delete plans via project" on public.floor_plans;
+create policy "delete plans via project" on public.floor_plans
+  for delete using (public.has_project_access(project_id));

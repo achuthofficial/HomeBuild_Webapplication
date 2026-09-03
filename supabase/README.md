@@ -40,7 +40,7 @@ The five entities from PRD section 8, plus what the interface needs:
 | Table | PRD | Feeds |
 |---|---|---|
 | `projects` | 8.1 | Portfolio, dashboard rail, finance |
-| `floor_plans` | 8.2 | Design module (not yet built) |
+| `floor_plans` | 8.2 | Design module — plan options and selection |
 | `site_updates` + `site_update_photos` | 8.3 | Daily Site Feed |
 | `ai_alerts` | 8.4 | Alert Management |
 | `milestones` | 8.5 | Finance payments table |

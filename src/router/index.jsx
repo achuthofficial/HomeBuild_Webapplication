@@ -13,6 +13,7 @@ import AuthAction from '@/pages/AuthAction'
 import Privacy from '@/pages/Privacy'
 
 import Dashboard from '@/pages/Dashboard'
+import Design from '@/pages/Design'
 import Projects from '@/pages/Projects'
 import Construction from '@/pages/Construction'
 import Finance from '@/pages/Finance'
@@ -68,6 +69,7 @@ export const router = createBrowserRouter([
         children: [
           { path: 'dashboard', element: <Dashboard /> },
           { path: 'projects', element: <Projects /> },
+          { path: 'design', element: <Design /> },
           { path: 'construction', element: <Construction /> },
           { path: 'finance', element: <Finance /> },
           { path: 'schedule', element: <Schedule /> },
