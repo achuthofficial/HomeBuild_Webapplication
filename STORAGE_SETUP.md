@@ -83,53 +83,6 @@ exist.
 
 ```sql
 -- ---------------------------------------------------------------- avatars --
--- Public bucket, so reads need no policy. Writes are restricted to the
--- user's own folder: storage.foldername(name) splits the path, and element 1
--- is the first segment — the uploader's Firebase UID.
-
-create policy "avatars are readable by anyone"
-on storage.objects for select
-using (bucket_id = 'avatars');
-
-create policy "users write their own avatar"
-on storage.objects for insert
-with check (
-  bucket_id = 'avatars'
-  and (storage.foldername(name))[1] = (auth.jwt() ->> 'sub')
-);
-
-create policy "users replace their own avatar"
-on storage.objects for update
-using (
-  bucket_id = 'avatars'
-  and (storage.foldername(name))[1] = (auth.jwt() ->> 'sub')
-);
-
--- ------------------------------------------------------------ site-photos --
--- Private. Any signed-in user may read the feed (they are colleagues on the
--- same projects), but may only write and delete under their own UID.
--- Path shape: <entryId>/<uid>/<filename>
-
-create policy "signed-in users read site photos"
-on storage.objects for select
-using (
-  bucket_id = 'site-photos'
-  and auth.jwt() ->> 'sub' is not null
-);
-
-create policy "users upload their own site photos"
-on storage.objects for insert
-with check (
-  bucket_id = 'site-photos'
-  and (storage.foldername(name))[2] = (auth.jwt() ->> 'sub')
-);
-
-create policy "users delete their own site photos"
-on storage.objects for delete
-using (
-  bucket_id = 'site-photos'
-  and (storage.foldername(name))[2] = (auth.jwt() ->> 'sub')
-);
 ```
 
 Note the index difference: avatars are `<uid>/avatar.jpg` so the UID is segment
