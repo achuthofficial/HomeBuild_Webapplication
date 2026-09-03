@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Camera, Plus, Sparkles, ArrowRight } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
@@ -19,6 +19,9 @@ import {
   feedFilters,
 } from '@/data/siteFeed'
 import { onImageError } from '@/lib/imageFallback'
+import { useAuth } from '@/context/AuthContext'
+import { uploadSitePhoto, listSitePhotos } from '@/lib/storage'
+import { isStorageConfigured } from '@/lib/supabaseStorage'
 
 const noteRules = {
   success: 'border-success',
@@ -34,9 +37,64 @@ const activityDots = {
 
 export default function Construction() {
   const { toast } = useToast()
+  const { authUser } = useAuth()
   const [filter, setFilter] = useState('All Activity')
   const [updateOpen, setUpdateOpen] = useState(false)
   const [lightbox, setLightbox] = useState(null)
+
+  /* Photos uploaded against each feed entry, keyed by entry id. There is no
+     database, so Storage itself is the index: files live under a per-entry
+     prefix and are listed back on mount. */
+  const [uploaded, setUploaded] = useState({})
+  const [uploadingFor, setUploadingFor] = useState(null)
+  const fileInput = useRef(null)
+  /* Which entry the hidden file input is currently acting for. */
+  const pendingEntry = useRef(null)
+
+  const loadPhotos = useCallback(async (entryId) => {
+    const { data } = await listSitePhotos(entryId)
+    setUploaded((prev) => ({ ...prev, [entryId]: data }))
+  }, [])
+
+  useEffect(() => {
+    if (!isStorageConfigured || !authUser) return
+    /* Signed URLs are per-request, so this runs on mount rather than being
+       cached across sessions. */
+    feedEntries.forEach((entry) => loadPhotos(entry.id))
+  }, [authUser, loadPhotos])
+
+  const openPicker = (entryId) => {
+    if (!isStorageConfigured) {
+      toast('File storage is not configured for this build. See STORAGE_SETUP.md.', {
+        tone: 'info',
+      })
+      return
+    }
+    pendingEntry.current = entryId
+    fileInput.current?.click()
+  }
+
+  const onFilePicked = async (event) => {
+    const file = event.target.files?.[0]
+    const entryId = pendingEntry.current
+    /* Reset so the same file can be re-picked after a failure. */
+    event.target.value = ''
+    pendingEntry.current = null
+    if (!file || !entryId) return
+
+    setUploadingFor(entryId)
+    const { error } = await uploadSitePhoto(file, entryId, authUser?.uid)
+    setUploadingFor(null)
+
+    if (error) {
+      toast(error, { tone: 'info' })
+      return
+    }
+    /* Re-list rather than appending, so ordering and signed URLs come from
+       one source instead of drifting between them. */
+    await loadPhotos(entryId)
+    toast('Photo added to the site feed.')
+  }
 
   const entries =
     filter === 'All Activity'
@@ -77,7 +135,16 @@ export default function Construction() {
             aria-hidden="true"
           />
 
-          <ol className="space-y-4">
+          <input
+        ref={fileInput}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/heic"
+        onChange={onFilePicked}
+        className="sr-only"
+        tabIndex={-1}
+      />
+
+      <ol className="space-y-4">
             {entries.map((entry) => (
               <li key={entry.id} className="relative pl-7">
                 <span
@@ -142,19 +209,41 @@ export default function Construction() {
                       </button>
                     ))}
 
+                    {/* Real uploads, read back from Storage by entry prefix. */}
+                    {(uploaded[entry.id] ?? []).map((photo) => (
+                      <button
+                        key={photo.path}
+                        type="button"
+                        onClick={() => setLightbox(photo.url)}
+                        className="focus-ring relative aspect-[4/3] overflow-hidden rounded-[8px]"
+                      >
+                        <img
+                          src={photo.url}
+                          onError={onImageError}
+                          alt={`${entry.title}, uploaded photo`}
+                          loading="lazy"
+                          className="size-full object-cover transition-transform duration-300 hover:scale-105"
+                        />
+                        <span className="absolute left-1.5 top-1.5 rounded-[4px] bg-ink/70 px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.05em] text-canvas">
+                          New
+                        </span>
+                      </button>
+                    ))}
+
                     {Array.from({ length: entry.uploadSlots }, (_, i) => (
                       <button
                         key={`slot-${i}`}
                         type="button"
-                        onClick={() =>
-                          toast('Photo upload is not wired up in this prototype.', {
-                            tone: 'info',
-                          })
-                        }
+                        disabled={uploadingFor === entry.id}
+                        onClick={() => openPicker(entry.id)}
                         aria-label="Add photo"
-                        className="focus-ring flex aspect-[4/3] items-center justify-center rounded-[8px] border border-dashed border-line-strong bg-subtle/60 text-ink-4 transition-colors hover:border-brand-200 hover:text-brand-ink"
+                        className="focus-ring flex aspect-[4/3] items-center justify-center rounded-[8px] border border-dashed border-line-strong bg-subtle/60 text-ink-4 transition-colors hover:border-brand-200 hover:text-brand-ink disabled:opacity-60"
                       >
-                        <Plus className="size-5" strokeWidth={1.75} />
+                        {uploadingFor === entry.id ? (
+                          <span className="size-5 animate-spin rounded-full border-2 border-line-strong border-t-brand-600" />
+                        ) : (
+                          <Plus className="size-5" strokeWidth={1.75} />
+                        )}
                       </button>
                     ))}
                   </div>
