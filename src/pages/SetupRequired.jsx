@@ -1,10 +1,10 @@
 import { KeyRound } from 'lucide-react'
-import { missingEnvVars } from '@/lib/supabase'
+import { missingEnvVars } from '@/lib/firebase'
 
 /**
- * Rendered instead of the auth screens when Supabase credentials are absent.
+ * Rendered instead of the auth screens when Firebase credentials are absent.
  *
- * Without this a fresh clone fails at the first click with an opaque network
+ * Without this a fresh clone fails at the first click with an opaque SDK
  * error. Naming the missing variables turns that into a two-minute fix.
  */
 export default function SetupRequired() {
@@ -17,17 +17,21 @@ export default function SetupRequired() {
 
         <h1 className="text-xl font-semibold text-ink">Authentication not configured</h1>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-2">
-          This build has no Supabase credentials, so sign-in is unavailable.
-          {missingEnvVars.length ? ' Missing: ' : ''}
-          {missingEnvVars.map((name, i) => (
-            <span key={name}>
-              {i > 0 ? ', ' : ''}
-              <code className="rounded bg-subtle px-1.5 py-0.5 text-[12px] text-ink">
-                {name}
-              </code>
-            </span>
-          ))}
+          This build has no Firebase credentials, so sign-in is unavailable.
         </p>
+
+        {missingEnvVars.length ? (
+          <div className="mt-4 rounded-[8px] border border-line bg-subtle/60 p-3">
+            <p className="eyebrow mb-2">Missing variables</p>
+            <ul className="space-y-1">
+              {missingEnvVars.map((name) => (
+                <li key={name}>
+                  <code className="text-[12px] text-ink">{name}</code>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
         <ol className="mt-6 space-y-3 text-[13px] leading-relaxed text-ink-2">
           <li>
@@ -42,9 +46,9 @@ export default function SetupRequired() {
             .
           </li>
           <li>
-            <span className="font-semibold text-ink">2.</span> Fill in the project
-            URL and anon key from your Supabase dashboard, under Project Settings
-            → API.
+            <span className="font-semibold text-ink">2.</span> Fill in the config
+            from the Firebase console, under Project settings → General → Your
+            apps → SDK setup and configuration.
           </li>
           <li>
             <span className="font-semibold text-ink">3.</span> Restart the dev
@@ -53,8 +57,9 @@ export default function SetupRequired() {
         </ol>
 
         <p className="mt-6 border-t border-line pt-4 text-[12px] leading-relaxed text-ink-3">
-          Deploying on Vercel? The same two variables need to be set in Project
-          Settings → Environment Variables, then redeployed. See{' '}
+          Deploying on Vercel? The same variables need to be set in Project
+          Settings → Environment Variables, then redeployed — Vite inlines them
+          at build time. See{' '}
           <code className="rounded bg-subtle px-1.5 py-0.5 text-[11.5px] text-ink">
             AUTH_SETUP.md
           </code>{' '}

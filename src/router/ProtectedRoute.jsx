@@ -3,7 +3,7 @@ import { useAuth, AUTH_STATUS } from '@/context/AuthContext'
 import SetupRequired from '@/pages/SetupRequired'
 
 /**
- * Gates the workspace behind a real Supabase session.
+ * Gates the workspace behind a real Firebase session.
  *
  * The `loading` branch matters more than it looks: reading a persisted session
  * out of storage is asynchronous, so for the first tick after a hard refresh
@@ -27,12 +27,6 @@ export default function ProtectedRoute({ children }) {
         <span className="size-6 animate-spin rounded-full border-2 border-line border-t-brand-600" />
       </div>
     )
-  }
-
-  /* A recovery session is deliberately not enough to enter the app — it exists
-     only to set a new password. Send it where it belongs. */
-  if (status === AUTH_STATUS.recovery) {
-    return <Navigate to="/reset-password" replace />
   }
 
   if (status !== AUTH_STATUS.authed) {

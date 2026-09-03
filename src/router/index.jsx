@@ -9,7 +9,7 @@ import SignIn from '@/pages/SignIn'
 import SignUp from '@/pages/SignUp'
 import ForgotPassword from '@/pages/ForgotPassword'
 import ResetPassword from '@/pages/ResetPassword'
-import AuthCallback from '@/pages/AuthCallback'
+import AuthAction from '@/pages/AuthAction'
 import Privacy from '@/pages/Privacy'
 
 import Dashboard from '@/pages/Dashboard'
@@ -26,9 +26,9 @@ import NotFound from '@/pages/NotFound'
 /**
  * Browser router.
  *
- * Deep links such as /finance and /auth/callback are rewritten to index.html
- * by vercel.json, so a hard refresh or an emailed link resolves here rather
- * than hitting Vercel's 404 page.
+ * Deep links such as /finance and /auth/action are rewritten to index.html by
+ * vercel.json, so a hard refresh or an emailed link resolves here rather than
+ * hitting Vercel's 404 page.
  */
 export const router = createBrowserRouter([
   {
@@ -39,7 +39,10 @@ export const router = createBrowserRouter([
 
       /* ---------------------------------------------------- unauthenticated
          AuthLayout bounces signed-in visitors out of these, except for the
-         two routes that legitimately run with a session. */
+         email-link routes, which a signed-in user can still legitimately be
+         completing. There is no OAuth callback route: popup sign-in never
+         leaves the page, and the redirect fallback returns to whichever
+         screen started it. */
       {
         element: <AuthLayout />,
         children: [
@@ -47,7 +50,7 @@ export const router = createBrowserRouter([
           { path: 'sign-up', element: <SignUp /> },
           { path: 'forgot-password', element: <ForgotPassword /> },
           { path: 'reset-password', element: <ResetPassword /> },
-          { path: 'auth/callback', element: <AuthCallback /> },
+          { path: 'auth/action', element: <AuthAction /> },
         ],
       },
 

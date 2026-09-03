@@ -8,7 +8,7 @@ import { Field, PasswordField, FormMessage, Divider } from '@/components/auth/Au
 import Button from '@/components/ui/Button'
 import { useAuth } from '@/context/AuthContext'
 
-/** Supabase enforces 6 characters by default; state it before they submit. */
+/** Firebase enforces 6 characters; state it before they submit. */
 const MIN_PASSWORD = 6
 
 export default function SignUp() {

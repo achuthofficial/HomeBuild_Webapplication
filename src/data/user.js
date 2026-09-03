@@ -3,7 +3,7 @@ import { avatar } from './media'
 /**
  * Fallback profile fields for the signed-in user.
  *
- * Identity (id, name, email, avatar) now comes from Supabase — see
+ * Identity (id, name, email, avatar) now comes from Firebase — see
  * AuthContext.toProfile. This supplies only the fields the prototype has no
  * database behind: role, phone and the two counters on the Settings screen.
  * They are placeholders, not the signed-in user's real data.

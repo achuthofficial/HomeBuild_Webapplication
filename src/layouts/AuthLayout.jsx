@@ -6,11 +6,11 @@ import SetupRequired from '@/pages/SetupRequired'
  * Wraps the unauthenticated screens.
  *
  * Signed-in visitors are bounced into the app so /sign-in is never a dead end
- * — but only from the screens where that makes sense. /reset-password and
- * /auth/callback are exempt: both legitimately run WITH a session, and
- * redirecting them away would make the recovery link impossible to complete.
+ * — but not from the email-link routes. Someone already signed in on this
+ * browser can still legitimately be resetting a password or confirming an
+ * address, and redirecting them away would strand the link unredeemed.
  */
-const SESSION_ALLOWED = ['/reset-password', '/auth/callback']
+const SESSION_ALLOWED = ['/reset-password', '/auth/action']
 
 export default function AuthLayout() {
   const { status, isConfigured } = useAuth()
@@ -40,11 +40,6 @@ export default function AuthLayout() {
   if (status === AUTH_STATUS.authed) {
     const target = location.state?.from?.pathname ?? '/dashboard'
     return <Navigate to={target} replace />
-  }
-
-  /* Mid-recovery but on, say, /sign-in — finish setting the password first. */
-  if (status === AUTH_STATUS.recovery) {
-    return <Navigate to="/reset-password" replace />
   }
 
   return <Outlet />

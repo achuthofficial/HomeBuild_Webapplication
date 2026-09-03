@@ -7,7 +7,20 @@ import {
   useRef,
   useState,
 } from 'react'
-import { supabase, isSupabaseConfigured } from '@/lib/supabase'
+import {
+  createUserWithEmailAndPassword,
+  getRedirectResult,
+  onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut as fbSignOut,
+  updateProfile,
+} from 'firebase/auth'
+
+import { auth, providers, isFirebaseConfigured } from '@/lib/firebase'
 import { demoProfile } from '@/data/user'
 
 const AuthContext = createContext(null)
@@ -15,95 +28,113 @@ const AuthContext = createContext(null)
 /**
  * Session lifecycle, as a state machine rather than a boolean.
  *
- *   loading   — the initial getSession() has not resolved yet. Route guards
- *               MUST wait here; treating it as signed-out is what makes an
- *               app bounce you to /sign-in on every hard refresh.
- *   anon      — resolved, no session.
- *   authed    — resolved, session in hand.
- *   recovery  — arrived via a password-reset link. Supabase issues a real
- *               session for this, but it is only meant for setting a new
- *               password, so it is tracked separately from `authed`.
+ *   loading — Firebase has not yet reported the persisted session. Route
+ *             guards MUST wait here; treating it as signed-out is what makes
+ *             an app bounce you to /sign-in on every hard refresh.
+ *   anon    — resolved, no user.
+ *   authed  — resolved, user in hand.
+ *
+ * Unlike a session-based provider there is no `recovery` state: Firebase
+ * password resets are a stateless one-time code in the email link, exchanged
+ * on /reset-password without ever creating a session.
  */
 export const AUTH_STATUS = {
   loading: 'loading',
   anon: 'anon',
   authed: 'authed',
-  recovery: 'recovery',
 }
 
-/** Where OAuth and email links come back to. Must be allow-listed in Supabase. */
-const callbackUrl = () => `${window.location.origin}/auth/callback`
-const recoveryUrl = () => `${window.location.origin}/reset-password`
+/** Where email action links (reset, verify) come back to. */
+const actionUrl = () => `${window.location.origin}/auth/action`
 
 /**
- * Supabase errors are terse and occasionally leak implementation detail. Map
- * the ones users actually hit onto something readable, and let anything
- * unrecognised through rather than swallowing it.
+ * Firebase reports failures as stable `auth/...` codes, which is what we key
+ * on — the accompanying messages are aimed at developers and change between
+ * SDK versions. Anything unrecognised falls through with its own message
+ * rather than being swallowed.
  */
+const ERROR_MESSAGES = {
+  /* Modern SDKs collapse wrong-password and unknown-email into this single
+     code deliberately, so an attacker cannot enumerate accounts. Keep the
+     message equally uninformative. */
+  'auth/invalid-credential': 'That email and password combination is not recognised.',
+  'auth/wrong-password': 'That email and password combination is not recognised.',
+  'auth/user-not-found': 'That email and password combination is not recognised.',
+  'auth/invalid-email': 'That does not look like a valid email address.',
+  'auth/user-disabled': 'This account has been disabled. Contact your administrator.',
+  'auth/email-already-in-use':
+    'An account with that email already exists. Try signing in instead.',
+  'auth/weak-password': 'Passwords need to be at least 6 characters.',
+  'auth/missing-password': 'Enter your password.',
+  'auth/too-many-requests':
+    'Too many attempts. Wait a few minutes, or reset your password.',
+  'auth/network-request-failed':
+    'Could not reach the authentication server. Check your connection.',
+  'auth/popup-closed-by-user': 'The sign-in window closed before it finished.',
+  'auth/cancelled-popup-request': null,
+  'auth/popup-blocked': 'Your browser blocked the sign-in window.',
+  'auth/account-exists-with-different-credential':
+    'That email is already registered with a different sign-in method. Use the one you signed up with.',
+  'auth/unauthorized-domain':
+    'This domain is not authorised for sign-in. Add it under Authentication → Settings → Authorized domains in the Firebase console.',
+  'auth/operation-not-allowed':
+    'That sign-in method is not enabled for this project.',
+  'auth/expired-action-code': 'This link has expired. Request a new one.',
+  'auth/invalid-action-code':
+    'This link is no longer valid. It may have been used already.',
+  'auth/requires-recent-login':
+    'For security, sign in again before making this change.',
+}
+
 function readableError(error) {
   if (!error) return null
-  const message = error.message ?? String(error)
-
-  const map = {
-    'Invalid login credentials': 'That email and password combination is not recognised.',
-    'Email not confirmed': 'Check your inbox and confirm your email address before signing in.',
-    'User already registered': 'An account with that email already exists. Try signing in instead.',
-    'Password should be at least 6 characters':
-      'Passwords need to be at least 6 characters.',
-    'New password should be different from the old password':
-      'Choose a password different from your current one.',
-    'Email rate limit exceeded':
-      'Too many emails requested. Wait a few minutes before trying again.',
+  const code = error.code ?? ''
+  if (code in ERROR_MESSAGES) return ERROR_MESSAGES[code]
+  if (code.startsWith('auth/')) {
+    /* Turn `auth/some-failure-code` into something a person can read rather
+       than showing a raw identifier. */
+    return `Sign-in failed (${code.replace('auth/', '').replace(/-/g, ' ')}).`
   }
-
-  if (map[message]) return map[message]
-  if (/rate limit|too many requests/i.test(message))
-    return 'Too many attempts. Wait a minute and try again.'
-  if (/network|fetch/i.test(message))
-    return 'Could not reach the authentication server. Check your connection.'
-  return message
+  return error.message ?? 'Something went wrong. Try again.'
 }
 
 /**
- * Builds the profile the UI renders. Real identity from Supabase wins; the
+ * Builds the profile the UI renders. Real identity from Firebase wins; the
  * demo fixture supplies the fields this prototype has no database for (role,
- * phone, project counts) so the Settings screen stays populated.
+ * phone, project counters) so the Settings screen stays populated.
  */
 function toProfile(user) {
   if (!user) return null
 
-  const meta = user.user_metadata ?? {}
   const name =
-    meta.full_name || meta.name || user.email?.split('@')[0] || 'Account'
+    user.displayName || user.email?.split('@')[0] || 'Account'
 
   return {
     ...demoProfile,
-    id: user.id,
+    id: user.uid,
     name,
     firstName: name.split(' ')[0],
     email: user.email ?? demoProfile.email,
-    /* Google and Apple return a picture; email signups have none, and the UI
-       falls back to initials rather than a stock face. */
-    avatar: meta.avatar_url || meta.picture || null,
+    /* Google returns a photo; Apple and email signups usually do not, and the
+       UI falls back to initials rather than a stock face. */
+    avatar: user.photoURL || null,
     initials: name
       .split(/\s+/)
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase() ?? '')
       .join(''),
     /* Which identity provider signed them in — shown on Settings. */
-    provider: user.app_metadata?.provider ?? 'email',
-    emailConfirmed: Boolean(user.email_confirmed_at ?? user.confirmed_at),
+    provider: user.providerData?.[0]?.providerId ?? 'password',
+    emailVerified: Boolean(user.emailVerified),
   }
 }
 
 export function AuthProvider({ children }) {
   const [status, setStatus] = useState(
-    isSupabaseConfigured ? AUTH_STATUS.loading : AUTH_STATUS.anon,
+    isFirebaseConfigured ? AUTH_STATUS.loading : AUTH_STATUS.anon,
   )
-  const [session, setSession] = useState(null)
+  const [user, setUser] = useState(null)
 
-  /* onAuthStateChange fires synchronously during signOut/refresh. Guard every
-     setState behind mount state so a fast unmount cannot warn. */
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -113,34 +144,34 @@ export function AuthProvider({ children }) {
   }, [])
 
   useEffect(() => {
-    if (!isSupabaseConfigured) return undefined
+    if (!isFirebaseConfigured) return undefined
 
-    /* Resolve the persisted session before rendering any guarded route. */
-    supabase.auth.getSession().then(({ data, error }) => {
-      if (!mounted.current) return
-      if (error) console.error('[auth] getSession failed', error)
-      setSession(data?.session ?? null)
-      setStatus(data?.session ? AUTH_STATUS.authed : AUTH_STATUS.anon)
+    /* Collect the result of a redirect-based OAuth sign-in. This resolves to
+       null on an ordinary page load, so it is safe to call unconditionally;
+       onAuthStateChanged reports the user either way. We call it only to
+       surface an error that would otherwise vanish silently. */
+    getRedirectResult(auth).catch((error) => {
+      console.error('[auth] redirect sign-in failed', error)
     })
 
-    /* The single source of truth from here on. Also fires in OTHER TABS when
-       localStorage changes, which is what keeps sign-out synchronised across
-       a user's open tabs. */
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, nextSession) => {
-      if (!mounted.current) return
+    /* The single source of truth. Fires once with the persisted user (or
+       null) after Firebase finishes initialising, then on every change —
+       including in OTHER TABS, which is what keeps sign-out synchronised
+       across a user's open tabs. Firebase refreshes ID tokens on its own. */
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      (nextUser) => {
+        if (!mounted.current) return
+        setUser(nextUser)
+        setStatus(nextUser ? AUTH_STATUS.authed : AUTH_STATUS.anon)
+      },
+      (error) => {
+        console.error('[auth] state listener failed', error)
+        if (mounted.current) setStatus(AUTH_STATUS.anon)
+      },
+    )
 
-      setSession(nextSession)
-
-      if (event === 'PASSWORD_RECOVERY') {
-        setStatus(AUTH_STATUS.recovery)
-        return
-      }
-      setStatus(nextSession ? AUTH_STATUS.authed : AUTH_STATUS.anon)
-    })
-
-    return () => subscription.unsubscribe()
+    return unsubscribe
   }, [])
 
   /* ---------------------------------------------------------------- actions
@@ -148,99 +179,164 @@ export function AuthProvider({ children }) {
      than throwing, so each form can render its own inline error state. */
 
   const signInWithPassword = useCallback(async (email, password) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    return { error: readableError(error) }
+    try {
+      await signInWithEmailAndPassword(auth, email, password)
+      return { error: null }
+    } catch (error) {
+      return { error: readableError(error) }
+    }
   }, [])
 
   const signUpWithPassword = useCallback(async (email, password, fullName) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: callbackUrl(),
-        data: fullName ? { full_name: fullName } : undefined,
-      },
-    })
-    if (error) return { error: readableError(error) }
+    try {
+      const { user: created } = await createUserWithEmailAndPassword(
+        auth,
+        email,
+        password,
+      )
 
-    /* With email confirmation on, Supabase returns a user but no session.
-       Distinguish that from an immediate sign-in so the UI can say which. */
-    return { error: null, needsConfirmation: !data.session }
+      /* Firebase has no "full name" field at creation, so set it immediately.
+         Done before the verification email so the template can use it. */
+      if (fullName) {
+        await updateProfile(created, { displayName: fullName })
+      }
+
+      /* Firebase does not block unverified accounts by default, and this app
+         keeps that behaviour: the user is signed in now and nudged to verify
+         from Settings. Send the mail but do not fail the signup over it. */
+      try {
+        await sendEmailVerification(created, { url: actionUrl() })
+      } catch (error) {
+        console.error('[auth] verification email failed to send', error)
+      }
+
+      return { error: null, needsConfirmation: false }
+    } catch (error) {
+      return { error: readableError(error) }
+    }
   }, [])
 
-  const signInWithOAuth = useCallback(async (provider) => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo: callbackUrl() },
-    })
-    /* On success the browser navigates away, so only failures return here. */
-    return { error: readableError(error) }
+  /**
+   * Popup first — it keeps the user on the page and preserves app state.
+   * Popups are blocked or unsupported often enough (in-app browsers, some
+   * mobile configurations, strict blockers) that a redirect fallback is not
+   * optional; without it those users simply cannot sign in.
+   */
+  const signInWithOAuth = useCallback(async (providerId) => {
+    const provider = providers[providerId]
+    if (!provider) return { error: `Unknown sign-in provider: ${providerId}` }
+
+    try {
+      await signInWithPopup(auth, provider)
+      return { error: null }
+    } catch (error) {
+      const code = error.code ?? ''
+
+      /* The user dismissed the popup, or a second one superseded this call.
+         Neither is an error worth showing. */
+      if (
+        code === 'auth/popup-closed-by-user' ||
+        code === 'auth/cancelled-popup-request'
+      ) {
+        return { error: null, cancelled: true }
+      }
+
+      if (
+        code === 'auth/popup-blocked' ||
+        code === 'auth/operation-not-supported-in-this-environment'
+      ) {
+        try {
+          /* Navigates away; getRedirectResult picks it up on return. */
+          await signInWithRedirect(auth, provider)
+          return { error: null }
+        } catch (redirectError) {
+          return { error: readableError(redirectError) }
+        }
+      }
+
+      return { error: readableError(error) }
+    }
   }, [])
 
   const requestPasswordReset = useCallback(async (email) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: recoveryUrl(),
-    })
-    return { error: readableError(error) }
+    try {
+      await sendPasswordResetEmail(auth, email, { url: actionUrl() })
+      return { error: null }
+    } catch (error) {
+      /* Do not leak whether an address is registered — the UI says "if an
+         account exists" either way, so a user-not-found is reported as
+         success. Everything else is a real failure. */
+      if (error.code === 'auth/user-not-found') return { error: null }
+      return { error: readableError(error) }
+    }
   }, [])
 
-  const updatePassword = useCallback(async (password) => {
-    const { error } = await supabase.auth.updateUser({ password })
-    if (error) return { error: readableError(error) }
-    /* The recovery session becomes an ordinary one once the password is set. */
-    if (mounted.current) setStatus(AUTH_STATUS.authed)
-    return { error: null }
+  const resendVerification = useCallback(async () => {
+    if (!auth.currentUser) return { error: 'You are not signed in.' }
+    try {
+      await sendEmailVerification(auth.currentUser, { url: actionUrl() })
+      return { error: null }
+    } catch (error) {
+      return { error: readableError(error) }
+    }
+  }, [])
+
+  /**
+   * Re-reads the user from Firebase's servers. Needed after a verification
+   * link is clicked in another tab: the local user object caches
+   * emailVerified and will not notice on its own.
+   */
+  const refreshUser = useCallback(async () => {
+    if (!auth.currentUser) return
+    await auth.currentUser.reload()
+    if (mounted.current) setUser({ ...auth.currentUser })
   }, [])
 
   const signOut = useCallback(async () => {
-    const { error } = await supabase.auth.signOut()
-    /* A stale or already-revoked token makes signOut fail while the local
-       session is still cleared. Treat that as success — the user is out. */
-    if (error && !/session|token/i.test(error.message)) {
+    try {
+      await fbSignOut(auth)
+    } catch (error) {
       return { error: readableError(error) }
     }
     if (mounted.current) {
-      setSession(null)
+      setUser(null)
       setStatus(AUTH_STATUS.anon)
     }
     return { error: null }
   }, [])
 
-  const user = session?.user ?? null
   const profile = useMemo(() => toProfile(user), [user])
 
   const value = useMemo(
     () => ({
       status,
-      session,
-      /* `user` is the PROFILE shape the existing screens already consume
-         (name, email, avatar, role), so Topbar and Settings needed no
-         restructuring. The raw Supabase user is exposed as `authUser` for
-         anything that needs ids, metadata or app_metadata. */
+      /* `user` is the PROFILE shape the screens consume (name, email, avatar,
+         role). The raw Firebase user is exposed as `authUser` for anything
+         needing uid, tokens or provider data. */
       user: profile,
       authUser: user,
       profile,
       isLoading: status === AUTH_STATUS.loading,
       isAuthenticated: status === AUTH_STATUS.authed,
-      isRecovering: status === AUTH_STATUS.recovery,
-      isConfigured: isSupabaseConfigured,
+      isConfigured: isFirebaseConfigured,
       signInWithPassword,
       signUpWithPassword,
       signInWithOAuth,
       requestPasswordReset,
-      updatePassword,
+      resendVerification,
+      refreshUser,
       signOut,
     }),
     [
       status,
-      session,
       user,
       profile,
       signInWithPassword,
       signUpWithPassword,
       signInWithOAuth,
       requestPasswordReset,
-      updatePassword,
+      resendVerification,
+      refreshUser,
       signOut,
     ],
   )

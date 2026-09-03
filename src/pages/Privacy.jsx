@@ -31,10 +31,11 @@ export default function Privacy() {
           <section>
             <h2 className="text-[15px] font-semibold text-ink">Accounts</h2>
             <p className="mt-1.5">
-              Authentication is handled by Supabase. Creating an account stores
-              your email address and, if you sign in with Google or Apple, the
-              name and profile picture that provider returns. Passwords are
-              never stored by this application — Supabase holds a hash.
+              Authentication is handled by Firebase Authentication, a Google
+              service. Creating an account stores your email address and, if you
+              sign in with Google or Apple, the name and profile picture that
+              provider returns. Passwords are never stored by this application
+              — Firebase holds a hash.
             </p>
           </section>
 
