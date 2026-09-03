@@ -114,6 +114,10 @@ export async function createProject({
   city,
   budget,
   managerUid,
+  customerUid,
+  status = 'lead',
+  plotLat,
+  plotLng,
   plotAddress,
   plotLengthFt,
   plotWidthFt,
@@ -135,7 +139,13 @@ export async function createProject({
         city: city || null,
         budget_total: budget ? Math.round(Number(budget)) : 0,
         manager_uid: managerUid ?? null,
+        /* PRD 8.1 models Customer as a link to the homeowner's profile, not a
+           name — client_name stays alongside it for the display label on the
+           portfolio card. */
+        customer_uid: customerUid || null,
         plot_address: plotAddress?.trim() || null,
+        plot_lat: plotLat ? Number(plotLat) : null,
+        plot_lng: plotLng ? Number(plotLng) : null,
         plot_length_ft: plotLengthFt ? Number(plotLengthFt) : null,
         plot_width_ft: plotWidthFt ? Number(plotWidthFt) : null,
         plot_facing: plotFacing || null,
@@ -143,9 +153,9 @@ export async function createProject({
         bhk_per_floor: bhkPerFloor ? Number(bhkPerFloor) : null,
         start_date: startDate || null,
         expected_completion: expectedCompletion || null,
-        /* PRD lifecycle starts at `lead`, not `active` — a project becomes
-           active once design is signed off. */
-        status: 'lead',
+        /* PRD 8.1 lifecycle. Defaults to `lead`, but a project migrated from
+           elsewhere may legitimately start further along. */
+        status,
       })
       .select(PROJECT_SELECT)
       .single(),

@@ -106,6 +106,7 @@ export async function createSiteUpdate({
   location,
   notes,
   status = 'in_progress',
+  milestoneId = null,
 }) {
   requireConfigured()
   return unwrap(
@@ -118,6 +119,7 @@ export async function createSiteUpdate({
         location_on_site: location || null,
         notes: notes || null,
         status,
+        milestone_id: milestoneId || null,
       })
       .select('id')
       .single(),
@@ -163,3 +165,19 @@ export const WORK_CATEGORIES = [
   'Flooring',
   'Painting',
 ]
+
+/**
+ * Milestones on a project, for PRD 8.3's optional "Milestone Reference" —
+ * which milestone the day's work contributes to.
+ */
+export async function listMilestoneOptions(projectId) {
+  requireConfigured()
+  if (!projectId) return []
+  return unwrap(
+    await supabase
+      .from('milestones')
+      .select('id, name, sequence')
+      .eq('project_id', projectId)
+      .order('sequence', { ascending: true }),
+  )
+}

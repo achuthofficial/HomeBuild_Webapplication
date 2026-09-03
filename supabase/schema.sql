@@ -117,6 +117,14 @@ create table if not exists public.project_members (
 
 -- =============================================================================
 -- floor_plans  (PRD 8.2)
+--
+-- NOTE ON A DELIBERATE DEVIATION FROM THE PRD.
+-- PRD 8.1 lists "Selected Plan" as a field on Project — a link to the chosen
+-- plan. That is modelled here as `is_selected` on the plan instead, so which
+-- plan is chosen has exactly ONE home. Storing it on both sides would let the
+-- two disagree, and reconciling "project points at plan B / plan A says it is
+-- selected" is a class of bug worth designing out rather than fixing later.
+-- Query it as: select * from floor_plans where project_id = $1 and is_selected.
 -- =============================================================================
 create table if not exists public.floor_plans (
   id              uuid primary key default gen_random_uuid(),
@@ -150,6 +158,8 @@ create table if not exists public.site_updates (
   notes            text,
   status           text not null default 'in_progress'
                    check (status in ('in_progress','done','blocked')),
+  -- PRD 8.3 "Milestone Reference". The constraint is added after the
+  -- milestones table exists, further down.
   milestone_id     uuid,
   uploaded_at      timestamptz not null default now(),
   created_at       timestamptz not null default now()
@@ -264,6 +274,19 @@ alter table public.milestones
 alter table public.milestones
   add constraint milestones_contractor_fk
   foreign key (contractor_id) references public.contractors(id) on delete set null;
+
+-- PRD 8.3's Milestone Reference. Deferred for the same reason: site_updates
+-- is declared before milestones. On delete the reference is cleared rather
+-- than cascading — losing a milestone must not delete the site history that
+-- documented the work.
+alter table public.site_updates
+  drop constraint if exists site_updates_milestone_fk;
+alter table public.site_updates
+  add constraint site_updates_milestone_fk
+  foreign key (milestone_id) references public.milestones(id) on delete set null;
+
+create index if not exists site_updates_milestone_idx
+  on public.site_updates(milestone_id);
 
 -- =============================================================================
 -- schedule_phases

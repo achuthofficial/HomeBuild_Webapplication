@@ -6,12 +6,21 @@ import { useToast } from '@/context/ToastContext'
 import { useAuth } from '@/context/AuthContext'
 import { useQuery } from '@/hooks/useQuery'
 import { listProjectFilters, createProject } from '@/api/projects'
+import { listProfilesByRole } from '@/api/profiles'
+import { lakh } from '@/lib/format'
 
 const field =
   'focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4 disabled:opacity-60'
 
 /** PRD 8.1 vocabularies — these match the CHECK constraints on the table. */
 const FACINGS = ['North', 'South', 'East', 'West']
+
+/** The lifecycle states a project can legitimately be created in. */
+const CREATE_STATUSES = [
+  { value: 'lead', label: 'Lead' },
+  { value: 'in_design', label: 'In Design' },
+  { value: 'active', label: 'Active' },
+]
 const FLOORS = [
   { value: 'G', label: 'Ground only' },
   { value: 'G+1', label: 'G+1' },
@@ -45,8 +54,13 @@ export default function CreateProjectModal({ open, onClose, onCreated }) {
   const [form, setForm] = useState({
     name: '',
     client: '',
+    customerUid: '',
+    managerUid: '',
+    status: 'lead',
     city: 'Bengaluru',
     plotAddress: '',
+    plotLat: '',
+    plotLng: '',
     plotLengthFt: '',
     plotWidthFt: '',
     plotFacing: 'East',
@@ -67,12 +81,26 @@ export default function CreateProjectModal({ open, onClose, onCreated }) {
   const filters = useQuery(() => listProjectFilters(), [], { enabled: open })
   const cities = (filters.data?.city ?? []).slice(1)
 
+  /* PRD 8.1 models Customer and Project Manager as links to profiles, not
+     free text, so both are pickers over the directory. */
+  const customers = useQuery(() => listProfilesByRole('customer'), [], {
+    enabled: open,
+  })
+  const managers = useQuery(() => listProfilesByRole('project_manager'), [], {
+    enabled: open,
+  })
+
   const reset = () =>
     setForm({
       name: '',
       client: '',
+      customerUid: '',
+      managerUid: authUser?.uid ?? '',
+      status: 'lead',
       city: cities[0] ?? 'Bengaluru',
       plotAddress: '',
+      plotLat: '',
+      plotLng: '',
       plotLengthFt: '',
       plotWidthFt: '',
       plotFacing: 'East',
@@ -102,7 +130,9 @@ export default function CreateProjectModal({ open, onClose, onCreated }) {
     try {
       const project = await createProject({
         ...form,
-        managerUid: authUser?.uid ?? null,
+        /* Fall back to the creator when no PM is chosen, so a project is
+           never left unowned. */
+        managerUid: form.managerUid || authUser?.uid || null,
       })
       setBusy(false)
       toast(`“${project.name}” created with its default schedule.`)
@@ -161,7 +191,7 @@ export default function CreateProjectModal({ open, onClose, onCreated }) {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <Label htmlFor="cp-client">Client</Label>
+              <Label htmlFor="cp-client">Client Name</Label>
               <input
                 id="cp-client"
                 value={form.client}
@@ -172,6 +202,68 @@ export default function CreateProjectModal({ open, onClose, onCreated }) {
               />
             </div>
             <div>
+              <Label htmlFor="cp-customer">Customer Account</Label>
+              <select
+                id="cp-customer"
+                value={form.customerUid}
+                onChange={set('customerUid')}
+                className={field}
+                disabled={busy}
+              >
+                <option value="">Not linked yet</option>
+                {(customers.data ?? []).map((c) => (
+                  <option key={c.uid} value={c.uid}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              {/* PRD 8.1 models Customer as a link to the homeowner's profile.
+                  The name above is the display label; this is the account the
+                  project actually belongs to. */}
+              <p className="mt-1.5 text-[11.5px] text-ink-3">
+                Links the project to a homeowner’s account.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="cp-manager">Project Manager</Label>
+              <select
+                id="cp-manager"
+                value={form.managerUid}
+                onChange={set('managerUid')}
+                className={field}
+                disabled={busy}
+              >
+                <option value="">Assign me</option>
+                {(managers.data ?? []).map((m) => (
+                  <option key={m.uid} value={m.uid}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <Label htmlFor="cp-status">Lifecycle Stage</Label>
+              <select
+                id="cp-status"
+                value={form.status}
+                onChange={set('status')}
+                className={field}
+                disabled={busy}
+              >
+                {CREATE_STATUSES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="sm:col-span-1">
               <Label htmlFor="cp-city">City</Label>
               <input
                 id="cp-city"
@@ -209,6 +301,44 @@ export default function CreateProjectModal({ open, onClose, onCreated }) {
               disabled={busy}
             />
           </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="cp-lat">Latitude</Label>
+              <input
+                id="cp-lat"
+                type="number"
+                step="0.000001"
+                min="-90"
+                max="90"
+                value={form.plotLat}
+                onChange={set('plotLat')}
+                placeholder="12.976750"
+                className={`${field} tnum`}
+                disabled={busy}
+              />
+            </div>
+            <div>
+              <Label htmlFor="cp-lng">Longitude</Label>
+              <input
+                id="cp-lng"
+                type="number"
+                step="0.000001"
+                min="-180"
+                max="180"
+                value={form.plotLng}
+                onChange={set('plotLng')}
+                placeholder="77.575210"
+                className={`${field} tnum`}
+                disabled={busy}
+              />
+            </div>
+          </div>
+          {/* PRD 8.1: geo-location for site navigation. Optional — a plot
+              often has an address before it has coordinates. */}
+          <p className="-mt-1 text-[11.5px] text-ink-3">
+            Optional. Used for site navigation once surveyed.
+          </p>
 
           <div className="grid gap-4 sm:grid-cols-3">
             <div>
@@ -307,8 +437,15 @@ export default function CreateProjectModal({ open, onClose, onCreated }) {
               className={`${field} tnum`}
               disabled={busy}
             />
+            {/* Stored in rupees to avoid rounding drift between screens, but
+                the PRD and the business both talk in lakhs — so show both
+                rather than making the PM convert in their head. */}
             <p className="mt-1.5 text-[11.5px] text-ink-3">
-              In rupees. The default phase schedule is costed from this figure.
+              In rupees
+              {form.budget && Number(form.budget) > 0
+                ? ` — ${lakh(form.budget)} (${(Number(form.budget) / 100000).toFixed(2)} lakh)`
+                : ''}
+              . The default phase schedule is costed from this figure.
             </p>
           </div>
 

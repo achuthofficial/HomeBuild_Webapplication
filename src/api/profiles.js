@@ -110,3 +110,30 @@ export async function listTeamMembers(excludeUid) {
       .join(''),
   }))
 }
+
+/**
+ * People selectable as a project's Customer or Project Manager (PRD 8.1).
+ *
+ * Both are *links* to a profile in the PRD, not free text — a project has to
+ * resolve to a real homeowner and a real PM for the persona-scoped views in
+ * section 4 to mean anything.
+ */
+export async function listProfilesByRole(role) {
+  requireConfigured()
+
+  let query = supabase
+    .from('profiles')
+    .select('firebase_uid, full_name, email, role')
+    .order('full_name', { ascending: true })
+
+  if (role) query = query.eq('role', role)
+
+  const rows = unwrap(await query.limit(100))
+
+  return rows.map((r) => ({
+    uid: r.firebase_uid,
+    name: r.full_name ?? r.email ?? r.firebase_uid,
+    email: r.email,
+    role: r.role,
+  }))
+}

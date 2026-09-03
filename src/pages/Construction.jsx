@@ -21,6 +21,7 @@ import {
   attachPhoto,
   createSiteUpdate,
   listProjectOptions,
+  listMilestoneOptions,
   WORK_CATEGORIES,
 } from '@/api/siteFeed'
 import { FormMessage } from '@/components/auth/AuthForm'
@@ -57,6 +58,7 @@ export default function Construction() {
     location: '',
     notes: '',
     status: 'in_progress',
+    milestoneId: '',
   })
   const fileInput = useRef(null)
   /* Which entry the hidden file input is currently acting for. */
@@ -70,6 +72,14 @@ export default function Construction() {
   const projectOptions = useQuery(() => listProjectOptions(), [], {
     enabled: updateOpen,
   })
+
+  /* PRD 8.3's optional Milestone Reference. Scoped to the chosen project, so
+     an update cannot be attached to another project's milestone. */
+  const milestoneOptions = useQuery(
+    () => listMilestoneOptions(draft.projectId),
+    [draft.projectId],
+    { enabled: updateOpen && Boolean(draft.projectId) },
+  )
 
   /** Posts a real site update (PRD 8.3) rather than claiming one was posted. */
   const postUpdate = async (e) => {
@@ -90,10 +100,11 @@ export default function Construction() {
         location: draft.location,
         notes: draft.notes,
         status: draft.status,
+        milestoneId: draft.milestoneId || null,
       })
       setPosting(false)
       setUpdateOpen(false)
-      setDraft((d) => ({ ...d, location: '', notes: '' }))
+      setDraft((d) => ({ ...d, location: '', notes: '', milestoneId: '' }))
       toast('Site update posted to the feed.')
       feed.refetch()
       categories.refetch()
@@ -408,7 +419,15 @@ export default function Construction() {
             <select
               id="su-project"
               value={draft.projectId}
-              onChange={(e) => setDraft((d) => ({ ...d, projectId: e.target.value }))}
+              onChange={(e) =>
+                /* Clearing the milestone matters: it belongs to the project
+                   being switched away from. */
+                setDraft((d) => ({
+                  ...d,
+                  projectId: e.target.value,
+                  milestoneId: '',
+                }))
+              }
               required
               disabled={posting}
               className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
@@ -471,6 +490,33 @@ export default function Construction() {
               disabled={posting}
               className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4"
             />
+          </div>
+
+          <div>
+            <label htmlFor="su-milestone" className="eyebrow mb-1.5 block">
+              Milestone Reference
+            </label>
+            <select
+              id="su-milestone"
+              value={draft.milestoneId}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, milestoneId: e.target.value }))
+              }
+              disabled={posting || !draft.projectId}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink disabled:opacity-60"
+            >
+              <option value="">
+                {draft.projectId ? 'Not linked' : 'Choose a project first'}
+              </option>
+              {(milestoneOptions.data ?? []).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.sequence}. {m.name}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-[11.5px] text-ink-3">
+              Optional — which milestone this day’s work contributes to.
+            </p>
           </div>
 
           <div>

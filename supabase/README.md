@@ -55,6 +55,49 @@ Money is stored in **rupees**, not lakhs. The UI formats to ₹ / L / Cr at the
 edge, and keeping the base unit avoids rounding drift between screens that
 show the same figure at different magnitudes.
 
+## PRD field alignment
+
+Checked field by field against the PRD's entity tables. Every column exists;
+this records which are collected in the UI and which are set by the system.
+
+**8.1 Project** — all 15 fields present.
+
+| PRD field | Column | Where it comes from |
+|---|---|---|
+| Project Name | `name` | Create dialog |
+| Customer | `customer_uid` | Create dialog — a **link** to a homeowner's profile |
+| Project Manager | `manager_uid` | Create dialog, defaults to the creator |
+| Status | `status` | Create dialog (Lead / In Design / Active) |
+| Plot Address | `plot_address` | Create dialog |
+| Plot Coordinates | `plot_lat`, `plot_lng` | Create dialog, optional |
+| Plot Length & Width | `plot_length_ft`, `plot_width_ft` | Create dialog |
+| Plot Facing | `plot_facing` | Create dialog |
+| Total Floors | `total_floors` | Create dialog |
+| BHK per Floor | `bhk_per_floor` | Create dialog |
+| Selected Plan | `floor_plans.is_selected` | Design module — see the deviation note in `schema.sql` |
+| Budget Total | `budget_total` | Create dialog |
+| Start Date | `start_date` | Create dialog |
+| Expected Completion | `expected_completion` | Create dialog |
+| Actual Completion | `actual_completion` | Stamped automatically on handover |
+
+**8.3 Site Update** — all 9 fields present, including the optional Milestone
+Reference. Supervisor and Uploaded At are set by the system rather than typed.
+
+**8.5 Milestone** — all 10 fields present. Release Percentage is *derived*
+from the amount against the project budget rather than entered, so the two
+cannot disagree. PM verification, customer approval and the transaction id are
+stamped server-side by `advance_milestone`.
+
+### Two places the implementation differs from the document, on purpose
+
+**Budget is stored in rupees, not lakhs.** PRD 8.1 says "in Indian Lakhs".
+Storing the base unit avoids rounding drift between screens that show the same
+figure at different magnitudes (₹ / L / Cr). The create dialog shows the lakh
+equivalent live as you type, so the PRD's unit is still what you read.
+
+**Selected Plan lives on the plan, not the project.** See the note in
+`schema.sql` — one home for the fact, rather than two that can disagree.
+
 ## Workflow rules live in SQL, not the client
 
 Three functions enforce the parts that must not be bypassed by a client bug:
