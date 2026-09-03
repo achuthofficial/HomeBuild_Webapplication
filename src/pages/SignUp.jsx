@@ -7,6 +7,7 @@ import OAuthButtons from '@/components/auth/OAuthButtons'
 import { Field, PasswordField, FormMessage, Divider } from '@/components/auth/AuthForm'
 import Button from '@/components/ui/Button'
 import { useAuth } from '@/context/AuthContext'
+import { hasOAuthProviders } from '@/lib/firebase'
 
 /** Firebase enforces 6 characters; state it before they submit. */
 const MIN_PASSWORD = 6
@@ -83,11 +84,18 @@ export default function SignUp() {
         </>
       }
     >
-      <div className="mt-6">
-        <OAuthButtons onSignIn={signInWithOAuth} disabled={busy} />
-      </div>
-
-      <Divider>or sign up with email</Divider>
+      {/* Both vanish together when every OAuth provider is disabled — a
+          lone "or continue with email" rule above nothing reads as a bug. */}
+      {hasOAuthProviders ? (
+        <>
+          <div className="mt-6">
+            <OAuthButtons onSignIn={signInWithOAuth} disabled={busy} />
+          </div>
+          <Divider>or sign up with email</Divider>
+        </>
+      ) : (
+        <div className="mt-6" />
+      )}
 
       <form onSubmit={submit} className="space-y-4">
         <FormMessage>{error}</FormMessage>

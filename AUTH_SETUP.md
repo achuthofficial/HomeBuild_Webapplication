@@ -49,7 +49,7 @@ for Production, Preview and Development, then redeploy. Vite reads env vars at
   passwords.
 - **Google** — set a project support email and save. Firebase provisions the
   OAuth client for you, so there is nothing to do in Google Cloud Console.
-- **Apple** — see section 4.
+- **Apple** — off by default in this app; see section 4.
 
 A method left disabled fails at runtime with `auth/operation-not-allowed`.
 
@@ -80,10 +80,23 @@ your-project.vercel.app
 
 ---
 
-## 4. Apple
+## 4. Apple (optional, off by default)
 
-Apple requires a **paid Apple Developer account** ($99/year). If that is not in
-place, remove the Apple button — see section 7.
+**The Apple button is hidden unless you turn it on.** Enabling the Apple
+provider in the Firebase console is not sufficient on its own: the web flow
+needs the OAuth code-flow fields below, all of which require a **paid Apple
+Developer account** ($99/year). A button that renders before that is configured
+is a button that always fails, so the app ships with it off.
+
+To enable it, complete the four steps below, then set:
+
+```bash
+VITE_ENABLE_APPLE_SIGNIN=true
+```
+
+in `.env.local` (and in Vercel's environment variables), and rebuild. Nothing
+in the source needs to change — the button, its handler and the provider are
+all still there, just filtered out.
 
 1. In the [Apple Developer portal](https://developer.apple.com/account), create
    an **App ID**, then a **Services ID**. The Services ID acts as your OAuth
@@ -161,11 +174,28 @@ from your own domain — see Firebase's guide on
 
 ---
 
-## 7. Removing a provider
+## 7. Turning providers on and off
 
-Edit the `providers` array in `src/components/auth/OAuthButtons.jsx`. Removing
-an entry drops the button from both Sign In and Sign Up; the layout adapts.
-Nothing else needs to change.
+Both OAuth buttons are controlled by env flags, so this is a configuration
+change rather than a code change:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `VITE_ENABLE_GOOGLE_SIGNIN` | on | Set `false` to hide the Google button |
+| `VITE_ENABLE_APPLE_SIGNIN` | off | Set `true` once Apple is configured |
+
+The buttons are filtered, not deleted — `providerEnabled` in
+`src/lib/firebase.js` is the single source of truth, and
+`OAuthButtons.jsx` renders whatever survives it.
+
+The layout adapts on its own: two providers sit side by side with short labels,
+a single provider becomes one full-width "Continue with …" button, and if both
+are disabled the button row **and** the "or continue with email" divider
+disappear together, leaving a clean email-only form.
+
+Remember to set the same flags in Vercel's environment variables — Vite inlines
+them at build time, so a flag that only exists locally will not affect the
+deployed site.
 
 ---
 

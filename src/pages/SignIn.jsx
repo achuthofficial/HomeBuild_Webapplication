@@ -7,6 +7,7 @@ import OAuthButtons from '@/components/auth/OAuthButtons'
 import { Field, PasswordField, FormMessage, Divider } from '@/components/auth/AuthForm'
 import Button from '@/components/ui/Button'
 import { useAuth } from '@/context/AuthContext'
+import { hasOAuthProviders } from '@/lib/firebase'
 
 export default function SignIn() {
   const { signInWithPassword, signInWithOAuth } = useAuth()
@@ -57,11 +58,18 @@ export default function SignIn() {
         </>
       }
     >
-      <div className="mt-6">
-        <OAuthButtons onSignIn={signInWithOAuth} disabled={busy} />
-      </div>
-
-      <Divider>or continue with email</Divider>
+      {/* Both vanish together when every OAuth provider is disabled — a
+          lone "or continue with email" rule above nothing reads as a bug. */}
+      {hasOAuthProviders ? (
+        <>
+          <div className="mt-6">
+            <OAuthButtons onSignIn={signInWithOAuth} disabled={busy} />
+          </div>
+          <Divider>or continue with email</Divider>
+        </>
+      ) : (
+        <div className="mt-6" />
+      )}
 
       <form onSubmit={submit} className="space-y-4">
         {notice ? <FormMessage tone="info">{notice}</FormMessage> : null}

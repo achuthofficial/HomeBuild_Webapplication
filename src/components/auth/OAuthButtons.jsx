@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import { cn } from '@/lib/cn'
 import Button from '@/components/ui/Button'
+import { providerEnabled } from '@/lib/firebase'
 
 /* lucide ships no brand marks, so the two logos are inlined. Google's is the
    official four-colour G; Apple's is a single path that takes currentColor so
@@ -24,7 +26,7 @@ function AppleMark() {
   )
 }
 
-const providers = [
+const ALL_PROVIDERS = [
   { id: 'google', label: 'Google', Mark: GoogleMark },
   { id: 'apple', label: 'Apple', Mark: AppleMark },
 ]
@@ -37,15 +39,28 @@ const providers = [
 export default function OAuthButtons({ onSignIn, disabled }) {
   const [pending, setPending] = useState(null)
 
+  /* Disabled providers are filtered out rather than deleted, so turning Apple
+     back on is an env change and not a code change. */
+  const enabled = ALL_PROVIDERS.filter(({ id }) => providerEnabled[id])
+
+  if (!enabled.length) return null
+
   const start = async (id) => {
     setPending(id)
     const { error } = await onSignIn(id)
+    /* On success the browser is navigating away (redirect) or the popup owns
+       the flow, so only a failure clears the pending state. */
     if (error) setPending(null)
   }
 
   return (
-    <div className="grid grid-cols-2 gap-3">
-      {providers.map(({ id, label, Mark }) => (
+    <div
+      className={cn(
+        'grid gap-3',
+        enabled.length > 1 ? 'grid-cols-2' : 'grid-cols-1',
+      )}
+    >
+      {enabled.map(({ id, label, Mark }) => (
         <Button
           key={id}
           variant="outline"
@@ -54,7 +69,12 @@ export default function OAuthButtons({ onSignIn, disabled }) {
           onClick={() => start(id)}
         >
           <Mark />
-          {pending === id ? 'Redirecting…' : label}
+          {pending === id
+            ? 'Connecting…'
+            : /* Two side-by-side buttons have no room for the long form. */
+              enabled.length > 1
+              ? label
+              : `Continue with ${label}`}
         </Button>
       ))}
     </div>

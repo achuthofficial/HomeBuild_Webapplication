@@ -77,7 +77,32 @@ export const appleProvider = new OAuthProvider('apple.com')
 appleProvider.addScope('email')
 appleProvider.addScope('name')
 
+/**
+ * Which OAuth buttons the auth screens offer.
+ *
+ * Apple is opt-in because it cannot work from a toggle alone: the web flow
+ * needs a Services ID, Team ID, Key ID and .p8 key, all of which require a
+ * paid Apple Developer account. Showing the button before that is configured
+ * gives users one that always fails, so it stays off until explicitly enabled.
+ *
+ * Flip it on with VITE_ENABLE_APPLE_SIGNIN=true once the Firebase console has
+ * the Apple provider fully configured. Google is on unless explicitly
+ * disabled the same way.
+ */
+const flag = (value, fallback) => {
+  if (value === undefined || value === '') return fallback
+  return String(value).toLowerCase() === 'true'
+}
+
+export const providerEnabled = {
+  google: flag(import.meta.env.VITE_ENABLE_GOOGLE_SIGNIN, true),
+  apple: flag(import.meta.env.VITE_ENABLE_APPLE_SIGNIN, false),
+}
+
 export const providers = {
   google: googleProvider,
   apple: appleProvider,
 }
+
+/** True when at least one OAuth button will render. */
+export const hasOAuthProviders = Object.values(providerEnabled).some(Boolean)
