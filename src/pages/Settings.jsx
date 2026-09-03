@@ -15,6 +15,7 @@ import {
 
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
+import Avatar from '@/components/ui/Avatar'
 import Chip from '@/components/ui/Chip'
 import Modal from '@/components/ui/Modal'
 import { cn } from '@/lib/cn'
@@ -39,12 +40,13 @@ const languages = [
 ]
 
 export default function SettingsPage() {
-  const { user, signOut } = useAuth()
+  const { user, signOut, resendVerification, refreshUser } = useAuth()
   const { toast } = useToast()
   const navigate = useNavigate()
 
   const { theme, resolvedTheme, systemDark, setTheme } = useTheme()
   const [language, setLanguage] = useState(languages[0])
+  const [verifying, setVerifying] = useState(false)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [memberMenu, setMemberMenu] = useState(null)
 
@@ -70,12 +72,7 @@ export default function SettingsPage() {
       <div className="space-y-4">
         <Card className="p-6 text-center">
           <div className="relative mx-auto w-fit">
-            <img
-              src={user.avatar}
-              onError={onAvatarError}
-              alt={user.name}
-              className="size-[104px] rounded-full object-cover"
-            />
+            <Avatar user={user} size={104} />
             <button
               type="button"
               onClick={() =>
@@ -109,8 +106,8 @@ export default function SettingsPage() {
           <Button
             variant="danger"
             className="mt-2 w-full"
-            onClick={() => {
-              signOut()
+            onClick={async () => {
+              await signOut()
               navigate('/sign-in', { replace: true })
             }}
           >
@@ -155,6 +152,47 @@ export default function SettingsPage() {
                 value={user.email}
                 className="focus-ring h-9 w-full rounded-[8px] border border-line bg-canvas px-3 text-[13px] text-ink-2"
               />
+
+              {/* Firebase signs users in before they verify, so the state has
+                  to be visible and actionable rather than silently pending. */}
+              {user.emailVerified ? (
+                <p className="mt-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-success">
+                  <Check className="size-3.5" strokeWidth={2.5} />
+                  Verified
+                </p>
+              ) : (
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-[11.5px] font-medium text-warning">
+                    Not verified
+                  </span>
+                  <button
+                    type="button"
+                    disabled={verifying}
+                    onClick={async () => {
+                      setVerifying(true)
+                      const { error } = await resendVerification()
+                      setVerifying(false)
+                      toast(
+                        error ?? 'Verification email sent. Check your inbox.',
+                        { tone: error ? 'info' : 'success' },
+                      )
+                    }}
+                    className="focus-ring rounded text-[11.5px] font-semibold text-brand-ink hover:underline disabled:opacity-50"
+                  >
+                    {verifying ? 'Sending…' : 'Resend email'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await refreshUser()
+                      toast('Status refreshed.', { tone: 'info' })
+                    }}
+                    className="focus-ring rounded text-[11.5px] font-medium text-ink-3 hover:text-ink-2"
+                  >
+                    Already done?
+                  </button>
+                </div>
+              )}
             </div>
             <div>
               <label htmlFor="set-phone" className="eyebrow mb-1.5 block">

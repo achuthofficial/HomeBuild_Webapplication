@@ -7,7 +7,7 @@ import KpiCard from '@/components/ui/KpiCard'
 import ProgressBar from '@/components/ui/ProgressBar'
 import AvatarStack from '@/components/ui/AvatarStack'
 import { cn } from '@/lib/cn'
-import { currentUser } from '@/data/user'
+import { useAuth } from '@/context/AuthContext'
 import { dashboardKpis, projectStatusRows, siteUpdates } from '@/data/dashboard'
 import { onImageError } from '@/lib/imageFallback'
 
@@ -31,12 +31,13 @@ const dotTones = {
 
 export default function Dashboard() {
   const navigate = useNavigate()
+  const { user } = useAuth()
 
   return (
     <>
       <PageHeader
         title="Executive Dashboard"
-        subtitle={`Welcome back, ${currentUser.firstName}. Here is your portfolio status for today.`}
+        subtitle={`Welcome back, ${user?.firstName ?? 'there'}. Here is your portfolio status for today.`}
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
