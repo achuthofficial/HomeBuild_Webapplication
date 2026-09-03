@@ -282,6 +282,25 @@ export function AuthProvider({ children }) {
   }, [])
 
   /**
+   * Points the profile at a newly uploaded avatar.
+   *
+   * With no user table of our own, Firebase's photoURL IS the store — writing
+   * it here is what makes the new picture survive a reload and show up in the
+   * topbar. The local user object is replaced afterwards because mutating the
+   * Firebase user does not notify onAuthStateChanged.
+   */
+  const setAvatarUrl = useCallback(async (photoURL) => {
+    if (!auth.currentUser) return { error: 'You are not signed in.' }
+    try {
+      await updateProfile(auth.currentUser, { photoURL })
+    } catch (error) {
+      return { error: readableError(error) }
+    }
+    if (mounted.current) setUser({ ...auth.currentUser })
+    return { error: null }
+  }, [])
+
+  /**
    * Re-reads the user from Firebase's servers. Needed after a verification
    * link is clicked in another tab: the local user object caches
    * emailVerified and will not notice on its own.
@@ -325,6 +344,7 @@ export function AuthProvider({ children }) {
       requestPasswordReset,
       resendVerification,
       refreshUser,
+      setAvatarUrl,
       signOut,
     }),
     [
@@ -337,6 +357,7 @@ export function AuthProvider({ children }) {
       requestPasswordReset,
       resendVerification,
       refreshUser,
+      setAvatarUrl,
       signOut,
     ],
   )

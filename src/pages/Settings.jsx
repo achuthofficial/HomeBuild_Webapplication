@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Camera,
@@ -23,6 +23,8 @@ import { useAuth } from '@/context/AuthContext'
 import { useTheme } from '@/context/ThemeContext'
 import { useToast } from '@/context/ToastContext'
 import { teamMembers } from '@/data/user'
+import { uploadAvatar } from '@/lib/storage'
+import { isStorageConfigured } from '@/lib/supabaseStorage'
 import { onAvatarError } from '@/lib/imageFallback'
 
 const themes = [
@@ -40,13 +42,49 @@ const languages = [
 ]
 
 export default function SettingsPage() {
-  const { user, signOut, resendVerification, refreshUser } = useAuth()
+  const { user, authUser, signOut, resendVerification, refreshUser, setAvatarUrl } =
+    useAuth()
   const { toast } = useToast()
   const navigate = useNavigate()
 
   const { theme, resolvedTheme, systemDark, setTheme } = useTheme()
   const [language, setLanguage] = useState(languages[0])
   const [verifying, setVerifying] = useState(false)
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const avatarInput = useRef(null)
+
+  /**
+   * Replace the profile photo.
+   *
+   * The file goes to Supabase Storage, then the resulting public URL is written
+   * back to the Firebase profile — that is what makes it survive a reload and
+   * appear in the topbar, since there is no user table of our own to hold it.
+   */
+  const onAvatarPicked = async (event) => {
+    const file = event.target.files?.[0]
+    /* Let the same file be re-picked after a failure. */
+    event.target.value = ''
+    if (!file) return
+
+    setUploadingAvatar(true)
+    const { data, error } = await uploadAvatar(file, authUser?.uid)
+
+    if (error) {
+      setUploadingAvatar(false)
+      toast(error, { tone: 'info' })
+      return
+    }
+
+    const { error: profileError } = await setAvatarUrl(data.url)
+    setUploadingAvatar(false)
+
+    toast(
+      profileError
+        ? `Uploaded, but the profile could not be updated: ${profileError}`
+        : 'Profile photo updated.',
+      { tone: profileError ? 'info' : 'success' },
+    )
+  }
   const [inviteOpen, setInviteOpen] = useState(false)
   const [memberMenu, setMemberMenu] = useState(null)
 
@@ -73,17 +111,37 @@ export default function SettingsPage() {
         <Card className="p-6 text-center">
           <div className="relative mx-auto w-fit">
             <Avatar user={user} size={104} />
+            <input
+              ref={avatarInput}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic"
+              onChange={onAvatarPicked}
+              className="sr-only"
+              tabIndex={-1}
+            />
             <button
               type="button"
-              onClick={() =>
-                toast('Photo upload is not wired up in this prototype.', {
-                  tone: 'info',
-                })
-              }
+              disabled={uploadingAvatar}
+              onClick={() => {
+                /* Without storage configured this stays the prototype's
+                   no-op, so the app is still usable with no Supabase project. */
+                if (!isStorageConfigured) {
+                  toast(
+                    'File storage is not configured for this build. See STORAGE_SETUP.md.',
+                    { tone: 'info' },
+                  )
+                  return
+                }
+                avatarInput.current?.click()
+              }}
               aria-label="Change profile photo"
-              className="focus-ring absolute bottom-1 right-1 flex size-7 items-center justify-center rounded-full bg-brand-600 text-on-brand ring-2 ring-surface transition hover:bg-brand-700"
+              className="focus-ring absolute bottom-1 right-1 flex size-7 items-center justify-center rounded-full bg-brand-600 text-on-brand ring-2 ring-surface transition hover:bg-brand-700 disabled:opacity-60"
             >
-              <Camera className="size-3.5" strokeWidth={2} />
+              {uploadingAvatar ? (
+                <span className="size-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+              ) : (
+                <Camera className="size-3.5" strokeWidth={2} />
+              )}
             </button>
           </div>
 
