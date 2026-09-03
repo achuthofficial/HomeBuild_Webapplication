@@ -87,15 +87,44 @@ export async function getAlertKpis() {
   }
 }
 
-/** Acknowledge — the row action in the alerts table. */
-export async function acknowledgeAlert(id) {
+/**
+ * Alert workflow (PRD 8.4): new → acknowledged → assigned → resolved, with
+ * false positive as an escape hatch.
+ *
+ * Goes through the `resolve_alert` function rather than a direct update so
+ * the transition is logged and the resolved timestamp is stamped server-side.
+ */
+export async function setAlertStatus(id, nextStatus, assignee = null) {
   requireConfigured()
-  return unwrap(
-    await supabase
-      .from('ai_alerts')
-      .update({ status: 'acknowledged' })
-      .eq('id', id)
-      .select('id, status')
-      .single(),
+  const rows = unwrap(
+    await supabase.rpc('resolve_alert', {
+      p_alert_id: id,
+      p_next_status: nextStatus,
+      p_assignee: assignee,
+    }),
   )
+  return Array.isArray(rows) ? rows[0] : rows
+}
+
+export const acknowledgeAlert = (id) => setAlertStatus(id, 'acknowledged')
+export const resolveAlert = (id) => setAlertStatus(id, 'resolved')
+export const dismissAlert = (id) => setAlertStatus(id, 'false_positive')
+export const assignAlert = (id, uid) => setAlertStatus(id, 'assigned', uid)
+
+/** The actions offered for a row, given where it currently is. */
+export function alertActionsFor(status) {
+  if (status === 'new') {
+    return [
+      { key: 'acknowledged', label: 'Acknowledge' },
+      { key: 'assigned', label: 'Assign to me' },
+      { key: 'false_positive', label: 'False positive' },
+    ]
+  }
+  if (status === 'acknowledged' || status === 'assigned') {
+    return [
+      { key: 'resolved', label: 'Mark resolved' },
+      { key: 'false_positive', label: 'False positive' },
+    ]
+  }
+  return []
 }

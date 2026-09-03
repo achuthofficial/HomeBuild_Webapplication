@@ -56,6 +56,7 @@ create table if not exists public.profiles (
   updated_at    timestamptz not null default now()
 );
 
+drop trigger if exists profiles_touch on public.profiles;
 create trigger profiles_touch before update on public.profiles
   for each row execute function public.touch_updated_at();
 
@@ -102,6 +103,7 @@ create index if not exists projects_status_idx on public.projects(status);
 create index if not exists projects_city_idx on public.projects(city);
 create index if not exists projects_manager_idx on public.projects(manager_uid);
 
+drop trigger if exists projects_touch on public.projects;
 create trigger projects_touch before update on public.projects
   for each row execute function public.touch_updated_at();
 
@@ -223,6 +225,7 @@ create index if not exists milestones_project_idx on public.milestones(project_i
 create unique index if not exists milestones_sequence_idx
   on public.milestones(project_id, sequence);
 
+drop trigger if exists milestones_touch on public.milestones;
 create trigger milestones_touch before update on public.milestones
   for each row execute function public.touch_updated_at();
 
@@ -468,3 +471,349 @@ create policy "signed-in insert projects" on public.projects
 drop policy if exists "signed-in update projects" on public.projects;
 create policy "signed-in update projects" on public.projects
   for update using (public.is_signed_in()) with check (public.is_signed_in());
+
+-- =============================================================================
+-- WORKFLOW TABLES AND FUNCTIONS
+--
+-- Appended rather than kept separate so there is one file to run. Everything
+-- here is idempotent: re-running schema.sql is safe and is how you upgrade.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- invitations
+--
+-- Team invites from the Settings screen. A real deployment would hand the
+-- token to an email service; this records the invite so it survives a reload
+-- and can be revoked, which is the part that belongs in the database.
+-- -----------------------------------------------------------------------------
+create table if not exists public.invitations (
+  id           uuid primary key default gen_random_uuid(),
+  email        text not null,
+  role         text not null default 'project_manager'
+               check (role in ('customer','project_manager','site_supervisor')),
+  project_id   uuid references public.projects(id) on delete cascade,
+  invited_by   text references public.profiles(firebase_uid) on delete set null,
+  status       text not null default 'pending'
+               check (status in ('pending','accepted','revoked','expired')),
+  token        uuid not null default gen_random_uuid(),
+  expires_at   timestamptz not null default (now() + interval '7 days'),
+  accepted_at  timestamptz,
+  created_at   timestamptz not null default now()
+);
+
+create unique index if not exists invitations_pending_email_idx
+  on public.invitations(lower(email))
+  where status = 'pending';
+
+-- -----------------------------------------------------------------------------
+-- activity_log
+--
+-- The PRD calls for audit fields on every entity. Rather than scattering
+-- "who changed what" across tables, state transitions append here — which is
+-- also what makes the Schedule screen's audit trail real rather than a toast.
+-- -----------------------------------------------------------------------------
+create table if not exists public.activity_log (
+  id          uuid primary key default gen_random_uuid(),
+  project_id  uuid references public.projects(id) on delete cascade,
+  actor_uid   text references public.profiles(firebase_uid) on delete set null,
+  entity      text not null,          -- 'project' | 'milestone' | 'alert' | ...
+  entity_id   uuid,
+  action      text not null,          -- 'created' | 'status_changed' | ...
+  summary     text not null,
+  detail      jsonb,
+  created_at  timestamptz not null default now()
+);
+
+create index if not exists activity_log_project_idx
+  on public.activity_log(project_id, created_at desc);
+create index if not exists activity_log_entity_idx
+  on public.activity_log(entity, entity_id);
+
+-- -----------------------------------------------------------------------------
+-- Derived project figures
+--
+-- progress_pct and budget_consumed were seeded as literals. Once phases and
+-- milestones start moving they must follow, or the dashboard drifts away from
+-- the detail screens. Recomputing in the database keeps one definition rather
+-- than one per client.
+-- -----------------------------------------------------------------------------
+create or replace function public.recalc_project_rollups(p_project_id uuid)
+returns void
+language plpgsql
+as $$
+declare
+  v_progress integer;
+  v_consumed bigint;
+begin
+  /* Progress is the share of phase cost that is done, so a long cheap phase
+     does not count the same as the structural work. Falls back to a plain
+     count when costs are absent. */
+  select coalesce(
+    round(
+      100.0 * sum(case when status = 'done' then coalesce(cost, 1) else 0 end)
+      / nullif(sum(coalesce(cost, 1)), 0)
+    ),
+    0
+  )
+  into v_progress
+  from public.schedule_phases
+  where project_id = p_project_id;
+
+  /* Consumed budget is what has actually been released. */
+  select coalesce(sum(release_amount), 0)
+  into v_consumed
+  from public.milestones
+  where project_id = p_project_id and status = 'paid';
+
+  update public.projects
+  set progress_pct    = least(100, greatest(0, coalesce(v_progress, 0))),
+      /* Never let a rollup erase a seeded figure with zero — a project with no
+         phases or paid milestones keeps whatever was set by hand. */
+      budget_consumed = case
+        when v_consumed > 0 then v_consumed
+        else budget_consumed
+      end,
+      updated_at = now()
+  where id = p_project_id;
+end;
+$$;
+
+create or replace function public.trigger_recalc_rollups()
+returns trigger
+language plpgsql
+as $$
+begin
+  perform public.recalc_project_rollups(
+    coalesce(new.project_id, old.project_id)
+  );
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists phases_rollup on public.schedule_phases;
+create trigger phases_rollup
+  after insert or update or delete on public.schedule_phases
+  for each row execute function public.trigger_recalc_rollups();
+
+drop trigger if exists milestones_rollup on public.milestones;
+create trigger milestones_rollup
+  after insert or update or delete on public.milestones
+  for each row execute function public.trigger_recalc_rollups();
+
+-- -----------------------------------------------------------------------------
+-- Milestone payment workflow (PRD 8.5)
+--
+-- Enforces the order in the database rather than trusting the client: a
+-- milestone cannot be paid before the customer approves, and cannot be
+-- approved before the PM verifies. Timestamps are stamped server-side so they
+-- cannot be back-dated.
+-- -----------------------------------------------------------------------------
+create or replace function public.advance_milestone(
+  p_milestone_id uuid,
+  p_next_status text
+)
+returns public.milestones
+language plpgsql
+security invoker
+as $$
+declare
+  v_row public.milestones;
+  v_uid text := public.firebase_uid();
+begin
+  if v_uid is null then
+    raise exception 'Not signed in';
+  end if;
+
+  select * into v_row from public.milestones where id = p_milestone_id;
+  if not found then
+    raise exception 'Milestone not found';
+  end if;
+
+  /* The only legal transitions. Anything else is a client bug or an attempt
+     to skip an approval step. */
+  if not (
+    (v_row.status = 'upcoming'             and p_next_status = 'pending_verification') or
+    (v_row.status = 'pending_verification' and p_next_status = 'approved') or
+    (v_row.status = 'approved'             and p_next_status = 'paid') or
+    (v_row.status = 'pending_verification' and p_next_status = 'upcoming')
+  ) then
+    raise exception 'Cannot move a milestone from % to %', v_row.status, p_next_status;
+  end if;
+
+  update public.milestones
+  set status = p_next_status,
+      pm_verified_at = case
+        when p_next_status = 'approved' then now() else pm_verified_at end,
+      customer_approved_at = case
+        when p_next_status = 'paid' then now() else customer_approved_at end,
+      payment_txn_id = case
+        when p_next_status = 'paid'
+        /* Stand-in for the escrow provider's reference until RazorpayX is
+           wired up (PRD section 9). */
+        then 'SIM-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12))
+        else payment_txn_id end
+  where id = p_milestone_id
+  returning * into v_row;
+
+  insert into public.activity_log (project_id, actor_uid, entity, entity_id, action, summary)
+  values (
+    v_row.project_id, v_uid, 'milestone', v_row.id, 'status_changed',
+    format('Milestone “%s” moved to %s', v_row.name, replace(p_next_status, '_', ' '))
+  );
+
+  return v_row;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Alert workflow (PRD 8.4)
+-- -----------------------------------------------------------------------------
+create or replace function public.resolve_alert(
+  p_alert_id uuid,
+  p_next_status text,
+  p_assignee text default null
+)
+returns public.ai_alerts
+language plpgsql
+security invoker
+as $$
+declare
+  v_row public.ai_alerts;
+  v_uid text := public.firebase_uid();
+begin
+  if v_uid is null then
+    raise exception 'Not signed in';
+  end if;
+
+  if p_next_status not in ('acknowledged','assigned','resolved','false_positive') then
+    raise exception 'Unknown alert status %', p_next_status;
+  end if;
+
+  update public.ai_alerts
+  set status = p_next_status,
+      assigned_to = case
+        when p_next_status = 'assigned' then coalesce(p_assignee, v_uid)
+        else assigned_to end,
+      resolved_at = case
+        when p_next_status in ('resolved','false_positive') then now()
+        else null end
+  where id = p_alert_id
+  returning * into v_row;
+
+  if not found then
+    raise exception 'Alert not found';
+  end if;
+
+  insert into public.activity_log (project_id, actor_uid, entity, entity_id, action, summary)
+  values (
+    v_row.project_id, v_uid, 'alert', v_row.id, 'status_changed',
+    format('Alert “%s” marked %s', v_row.category, replace(p_next_status, '_', ' '))
+  );
+
+  return v_row;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Schedule delay forecast (PRD 5.4.3)
+--
+-- The rule-based part only — no model involved. Pushes out the phases that
+-- follow a delayed one, applies the documented monsoon buffer, and records
+-- what it did.
+-- -----------------------------------------------------------------------------
+create or replace function public.apply_schedule_forecast(p_project_id uuid)
+returns integer
+language plpgsql
+security invoker
+as $$
+declare
+  v_uid text := public.firebase_uid();
+  v_cumulative numeric := 0;
+  v_row record;
+  v_touched integer := 0;
+  v_shift numeric;
+begin
+  if v_uid is null then
+    raise exception 'Not signed in';
+  end if;
+
+  for v_row in
+    select * from public.schedule_phases
+    where project_id = p_project_id
+    order by sequence
+  loop
+    if v_row.delay_days > 0 then
+      /* Weeks, since the Gantt is drawn in week offsets. */
+      v_cumulative := v_cumulative + (v_row.delay_days / 7.0);
+    end if;
+
+    if v_cumulative > 0 and v_row.status in ('queued','on_hold','in_progress') then
+      v_shift := v_cumulative;
+
+      /* PRD 5.4.3: monsoon weeks 22-36 carry a 15% buffer. */
+      if v_row.baseline_start_week between 22 and 36 then
+        v_shift := v_shift * 1.15;
+      end if;
+
+      update public.schedule_phases
+      set forecast_start_week = coalesce(baseline_start_week, 0) + v_shift,
+          forecast_end_week   = coalesce(baseline_end_week, 0) + v_shift
+      where id = v_row.id;
+
+      v_touched := v_touched + 1;
+    end if;
+  end loop;
+
+  insert into public.activity_log (project_id, actor_uid, entity, action, summary)
+  values (
+    p_project_id, v_uid, 'schedule', 'forecast_applied',
+    format('Forecast recalculated; %s phase(s) shifted by %s week(s)',
+           v_touched, round(v_cumulative, 1))
+  );
+
+  return v_touched;
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- RLS for the new tables
+-- -----------------------------------------------------------------------------
+alter table public.invitations  enable row level security;
+alter table public.activity_log enable row level security;
+
+drop policy if exists "signed-in read invitations" on public.invitations;
+create policy "signed-in read invitations" on public.invitations
+  for select using (public.is_signed_in());
+
+drop policy if exists "signed-in create invitations" on public.invitations;
+create policy "signed-in create invitations" on public.invitations
+  for insert with check (invited_by = public.firebase_uid());
+
+drop policy if exists "revoke own invitations" on public.invitations;
+create policy "revoke own invitations" on public.invitations
+  for update using (invited_by = public.firebase_uid());
+
+drop policy if exists "signed-in read activity" on public.activity_log;
+create policy "signed-in read activity" on public.activity_log
+  for select using (public.is_signed_in());
+
+drop policy if exists "signed-in write activity" on public.activity_log;
+create policy "signed-in write activity" on public.activity_log
+  for insert with check (actor_uid = public.firebase_uid());
+
+-- Schedule phases and contractors become editable from the app.
+drop policy if exists "signed-in update phases" on public.schedule_phases;
+create policy "signed-in update phases" on public.schedule_phases
+  for update using (public.is_signed_in()) with check (public.is_signed_in());
+
+drop policy if exists "signed-in insert phases" on public.schedule_phases;
+create policy "signed-in insert phases" on public.schedule_phases
+  for insert with check (public.is_signed_in());
+
+drop policy if exists "signed-in update contractors" on public.contractors;
+create policy "signed-in update contractors" on public.contractors
+  for update using (public.is_signed_in()) with check (public.is_signed_in());
+
+drop policy if exists "signed-in insert milestones" on public.milestones;
+create policy "signed-in insert milestones" on public.milestones
+  for insert with check (public.is_signed_in());

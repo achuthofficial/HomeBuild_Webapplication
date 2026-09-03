@@ -12,10 +12,13 @@ import { cn } from '@/lib/cn'
 import { longDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
 import { useQuery } from '@/hooks/useQuery'
+import { useAuth } from '@/context/AuthContext'
+import { downloadCsv } from '@/lib/csv'
 import {
   listAlerts,
   getAlertKpis,
-  acknowledgeAlert,
+  setAlertStatus,
+  alertActionsFor,
   severityFilters,
   statusFilters,
   ALERTS_PER_PAGE,
@@ -66,6 +69,7 @@ function Severity({ level }) {
 
 export default function Analytics() {
   const { toast } = useToast()
+  const { authUser } = useAuth()
   const [severity, setSeverity] = useState('All Levels')
   const [status, setStatus] = useState('Active Only')
   const [page, setPage] = useState(1)
@@ -85,19 +89,29 @@ export default function Analytics() {
   const safePage = Math.min(page, totalPages)
   const start = (safePage - 1) * ALERTS_PER_PAGE
 
-  /* Optimistic acknowledge: flip the row immediately, roll back on failure. */
-  const onAcknowledge = async (alert) => {
-    const { error } = await acknowledgeAlert(alert.id).then(
-      () => ({ error: null }),
-      (e) => ({ error: e.message }),
-    )
-    if (error) {
-      toast(error, { tone: 'info' })
-      return
+  /**
+   * Alert workflow (PRD 8.4). The transition and its audit entry are written
+   * by the resolve_alert function, so an unknown status is rejected there
+   * rather than silently stored.
+   */
+  const [actingOn, setActingOn] = useState(null)
+
+  const runAction = async (alert, nextStatus, label) => {
+    setActingOn(alert.id)
+    try {
+      await setAlertStatus(
+        alert.id,
+        nextStatus,
+        nextStatus === 'assigned' ? authUser?.uid : null,
+      )
+      toast(`“${alert.type}” — ${label.toLowerCase()}.`)
+      alertsQuery.refetch()
+      kpisQuery.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setActingOn(null)
     }
-    toast(`“${alert.type}” acknowledged.`)
-    alertsQuery.refetch()
-    kpisQuery.refetch()
   }
 
   /* Changing a filter must return to page 1, or a narrow filter can land on
@@ -117,7 +131,24 @@ export default function Analytics() {
             <Button
               variant="outline"
               icon={Download}
-              onClick={() => toast('Alert report exported.')}
+              onClick={() => {
+                /* Exports what is on screen, which is what the filters above
+                   were used to select. */
+                const count = downloadCsv(
+                  'homebuild-alerts',
+                  [
+                    { key: 'type', label: 'Alert' },
+                    { key: 'location', label: 'Location' },
+                    { key: 'severity', label: 'Severity' },
+                    { key: 'confidence', label: 'Confidence %' },
+                    { key: 'project', label: 'Project' },
+                    { key: 'status', label: 'Status' },
+                    { key: 'detected', label: 'Detected', format: (v) => longDate(v) },
+                  ],
+                  visible,
+                )
+                toast(`Exported ${count} alert${count === 1 ? '' : 's'} as CSV.`)
+              }}
             >
               Export Report
             </Button>
@@ -272,19 +303,31 @@ export default function Analytics() {
                   </td>
 
                   <td className="px-5 py-4">
-                    {alert.status === 'new' ? (
-                      <button
-                        type="button"
-                        onClick={() => onAcknowledge(alert)}
-                        className="focus-ring rounded text-[12px] font-semibold text-brand-ink hover:underline"
-                      >
-                        Acknowledge
-                      </button>
-                    ) : (
-                      <span className="text-[12px] capitalize text-ink-4">
-                        {alert.status.replace('_', ' ')}
-                      </span>
-                    )}
+                    {/* Only the transitions legal from this row's state, so a
+                        click cannot produce an error from the database. */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      {alertActionsFor(alert.status).map((action) => (
+                        <button
+                          key={action.key}
+                          type="button"
+                          disabled={actingOn === alert.id}
+                          onClick={() => runAction(alert, action.key, action.label)}
+                          className={cn(
+                            'focus-ring rounded text-[12px] font-semibold hover:underline disabled:opacity-50',
+                            action.key === 'false_positive'
+                              ? 'text-ink-3'
+                              : 'text-brand-ink',
+                          )}
+                        >
+                          {action.label}
+                        </button>
+                      ))}
+                      {alertActionsFor(alert.status).length === 0 ? (
+                        <span className="text-[12px] capitalize text-ink-4">
+                          {alert.status.replace('_', ' ')}
+                        </span>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))}

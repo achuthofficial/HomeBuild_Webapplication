@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { FileDown, ListFilter, TrendingUp, Users, Zap } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
@@ -6,6 +6,7 @@ import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Chip from '@/components/ui/Chip'
 import Segmented from '@/components/ui/Segmented'
+import FilterSelect from '@/components/ui/FilterSelect'
 import ProgressBar from '@/components/ui/ProgressBar'
 import Modal from '@/components/ui/Modal'
 import GanttChart from '@/components/charts/GanttChart'
@@ -14,13 +15,33 @@ import { cn } from '@/lib/cn'
 import { useToast } from '@/context/ToastContext'
 import { useQuery } from '@/hooks/useQuery'
 import { getPrimaryProjectId } from '@/api/finance'
-import { getSchedule } from '@/api/schedule'
+import {
+  getSchedule,
+  setPhaseStatus,
+  applyForecast,
+  PHASE_ACTIONS,
+} from '@/api/schedule'
+import { listActivity } from '@/api/activity'
+import { downloadCsv } from '@/lib/csv'
+import { longDate, clockTime } from '@/lib/format'
 import {
   scheduleViews,
   scheduleHealth,
   workforce,
   timelinePulse,
 } from '@/data/schedule'
+
+/** Filter labels mapped onto the stored phase status. */
+const STATUS_FILTER_KEYS = {
+  Done: 'done',
+  'In Progress': 'in_progress',
+  Critical: 'critical',
+  Delayed: 'delayed',
+  Queued: 'queued',
+  'On Hold': 'on_hold',
+}
+
+const STATUS_FILTER_KEYS_WITH_ALL = { 'All Phases': null, ...STATUS_FILTER_KEYS }
 
 const pulseDots = {
   success: 'bg-success',
@@ -104,6 +125,10 @@ export default function Schedule() {
   const { toast } = useToast()
   const [view, setView] = useState('Gantt')
   const [task, setTask] = useState(null)
+  const [auditOpen, setAuditOpen] = useState(false)
+  const [forecasting, setForecasting] = useState(false)
+  const [phaseBusy, setPhaseBusy] = useState(false)
+  const [statusFilter, setStatusFilter] = useState('All Phases')
 
   const projectQuery = useQuery(() => getPrimaryProjectId(), [])
   const projectId = projectQuery.data?.id ?? null
@@ -113,7 +138,64 @@ export default function Schedule() {
     [projectId],
     { enabled: Boolean(projectId) },
   )
-  const groups = schedule.data?.groups ?? []
+  const allGroups = schedule.data?.groups ?? []
+
+  /* Filtered client-side: a project has a dozen phases, so a round trip per
+     filter change would cost more than it saves. Groups left with no matching
+     task are dropped rather than rendered empty. */
+  const groups = useMemo(() => {
+    if (statusFilter === 'All Phases') return allGroups
+    const key = STATUS_FILTER_KEYS[statusFilter]
+    return allGroups
+      .map((g) => ({ ...g, tasks: g.tasks.filter((task) => task.status === key) }))
+      .filter((g) => g.tasks.length > 0)
+  }, [allGroups, statusFilter])
+
+  /* Loaded only when the drawer opens — it is a long table nobody reads on
+     every visit. */
+  const audit = useQuery(
+    () => listActivity({ projectId, limit: 50 }),
+    [projectId, auditOpen],
+    { enabled: Boolean(projectId) && auditOpen },
+  )
+
+  /**
+   * PRD 5.4.3's forecast: cumulative delay pushed into the phases that follow,
+   * plus the documented monsoon buffer. Rule-based, no model involved.
+   */
+  const runForecast = async () => {
+    if (!projectId) return
+    setForecasting(true)
+    try {
+      const shifted = await applyForecast(projectId)
+      toast(
+        shifted > 0
+          ? `Forecast updated. ${shifted} phase${shifted === 1 ? '' : 's'} shifted.`
+          : 'Forecast recalculated. Nothing needed shifting.',
+      )
+      schedule.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setForecasting(false)
+    }
+  }
+
+  /** Phase status from the task detail dialog. */
+  const changePhase = async (phase, status, label) => {
+    setPhaseBusy(true)
+    try {
+      await setPhaseStatus(phase.id, status)
+      setTask(null)
+      toast(`“${phase.name}” — ${label.toLowerCase()}.`)
+      /* A completed phase moves the project's progress via a trigger. */
+      schedule.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setPhaseBusy(false)
+    }
+  }
 
   return (
     <>
@@ -132,21 +214,43 @@ export default function Schedule() {
               onChange={setView}
               ariaLabel="Schedule view"
             />
-            <Button
-              variant="outline"
-              icon={ListFilter}
-              onClick={() =>
-                toast('Schedule filters are not available in this prototype.', {
-                  tone: 'info',
-                })
-              }
-            >
-              Filters
-            </Button>
+            <FilterSelect
+              label="Phase"
+              value={statusFilter}
+              options={Object.keys(STATUS_FILTER_KEYS_WITH_ALL)}
+              onChange={setStatusFilter}
+              align="right"
+            />
             <Button
               variant="violet"
               icon={FileDown}
-              onClick={() => toast('Schedule exported as PDF.')}
+              onClick={() => {
+                const rows = groups.flatMap((g) =>
+                  g.tasks.map((task) => ({
+                    group: g.name,
+                    name: task.name,
+                    status: task.status,
+                    startWeek: task.bar.start,
+                    endWeek: task.bar.end,
+                    delayDays: task.delayDays,
+                    cost: task.cost,
+                  })),
+                )
+                const count = downloadCsv(
+                  'homebuild-schedule',
+                  [
+                    { key: 'group', label: 'Phase Group' },
+                    { key: 'name', label: 'Task' },
+                    { key: 'status', label: 'Status' },
+                    { key: 'startWeek', label: 'Start Week' },
+                    { key: 'endWeek', label: 'End Week' },
+                    { key: 'delayDays', label: 'Delay (days)' },
+                    { key: 'cost', label: 'Cost (INR)' },
+                  ],
+                  rows,
+                )
+                toast(`Exported ${count} phase${count === 1 ? '' : 's'} as CSV.`)
+              }}
             >
               Export PDF
             </Button>
@@ -251,7 +355,8 @@ export default function Schedule() {
             </div>
             <button
               type="button"
-              onClick={() => toast('Workforce reallocation applied.')}
+              disabled={forecasting}
+              onClick={runForecast}
               className="focus-ring shrink-0 rounded text-[11.5px] font-semibold text-brand-ink hover:underline"
             >
               {workforce.optimization.action}
@@ -284,11 +389,7 @@ export default function Schedule() {
 
           <button
             type="button"
-            onClick={() =>
-              toast('Audit log is not available in this prototype.', {
-                tone: 'info',
-              })
-            }
+            onClick={() => setAuditOpen(true)}
             className="focus-ring mt-5 rounded text-[12px] font-semibold text-brand-ink hover:underline"
           >
             View Full Audit Log
@@ -326,8 +427,65 @@ export default function Schedule() {
                 </p>
               </div>
             ) : null}
+
+            {/* Changing a phase here is what moves the project's progress —
+                the rollup is a database trigger, not a second client write. */}
+            <div className="border-t border-line pt-4">
+              <p className="eyebrow mb-2">Update Status</p>
+              <div className="grid grid-cols-2 gap-2">
+                {PHASE_ACTIONS.filter((a) => a.key !== task.status).map((action) => (
+                  <Button
+                    key={action.key}
+                    variant={action.key === 'done' ? 'success' : 'outline'}
+                    size="sm"
+                    disabled={phaseBusy}
+                    onClick={() => changePhase(task, action.key, action.label)}
+                  >
+                    {action.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
           </div>
         ) : null}
+      </Modal>
+
+      {/* ---------------- audit log ---------------- */}
+      <Modal
+        open={auditOpen}
+        onClose={() => setAuditOpen(false)}
+        title="Audit Log"
+        description="Every recorded change on this project, newest first."
+        size="lg"
+      >
+        <QueryBoundary
+          isLoading={audit.isLoading}
+          error={audit.error}
+          data={audit.data}
+          onRetry={audit.refetch}
+          emptyTitle="Nothing recorded yet"
+          emptyBody="Milestone approvals, alert decisions and phase changes appear here."
+          skeleton={<RowSkeleton rows={5} />}
+        >
+          <ol className="space-y-3">
+            {(audit.data ?? []).map((entry) => (
+              <li
+                key={entry.id}
+                className="flex gap-3 border-b border-line pb-3 last:border-b-0"
+              >
+                <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-brand-600" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] leading-snug text-ink">
+                    {entry.summary}
+                  </p>
+                  <p className="mt-0.5 text-[11.5px] text-ink-3">
+                    {entry.actor} · {longDate(entry.at)} at {clockTime(entry.at)}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </QueryBoundary>
       </Modal>
     </>
   )

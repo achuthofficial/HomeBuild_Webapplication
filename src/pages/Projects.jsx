@@ -12,11 +12,26 @@ import QueryBoundary, { Skeleton } from '@/components/ui/QueryBoundary'
 import { estDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
 import { useQuery } from '@/hooks/useQuery'
-import { listProjects, listProjectFilters } from '@/api/projects'
+import { useAuth } from '@/context/AuthContext'
+import {
+  listProjects,
+  listProjectFilters,
+  updateProjectProgress,
+} from '@/api/projects'
 
 const PROJECTS_PER_PAGE = 6
 
 /* Portfolio filter labels map onto the timeline_status column. */
+/** PRD 8.1 lifecycle states, for the advanced filter. */
+const LIFECYCLE = {
+  Lead: 'lead',
+  'In Design': 'in_design',
+  Active: 'active',
+  Paused: 'paused',
+  Completed: 'completed',
+  Cancelled: 'cancelled',
+}
+
 const statusMatch = {
   'On Track': 'on_track',
   Delayed: 'delayed',
@@ -25,15 +40,25 @@ const statusMatch = {
 }
 
 export default function Projects() {
-  const { openCreateProject } = useOutletContext()
+  const { openCreateProject, dataVersion } = useOutletContext()
   const { toast } = useToast()
+  const { authUser } = useAuth()
+  const [savingId, setSavingId] = useState(null)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [advanced, setAdvanced] = useState({
+    lifecycle: 'Any',
+    minBudget: '',
+    maxBudget: '',
+  })
 
   const [status, setStatus] = useState('All Projects')
   const [city, setCity] = useState('All Locations')
   const [manager, setManager] = useState('All Managers')
   const [page, setPage] = useState(1)
 
-  const projectsQuery = useQuery(() => listProjects(), [])
+  /* dataVersion is part of the key, so creating a project refreshes this
+     list rather than requiring a reload. */
+  const projectsQuery = useQuery(() => listProjects(), [dataVersion])
   const filtersQuery = useQuery(() => listProjectFilters(), [])
 
   const projects = projectsQuery.data ?? []
@@ -51,10 +76,21 @@ export default function Projects() {
         (p) =>
           (status === 'All Projects' || p.timelineKey === statusMatch[status]) &&
           (city === 'All Locations' || p.city === city) &&
-          (manager === 'All Managers' || p.manager === manager),
+          (manager === 'All Managers' || p.manager === manager) &&
+          (advanced.lifecycle === 'Any' || p.status === LIFECYCLE[advanced.lifecycle]) &&
+          /* Budget bounds are in rupees, matching how the column is stored. */
+          (!advanced.minBudget || p.budgetTotal >= Number(advanced.minBudget)) &&
+          (!advanced.maxBudget || p.budgetTotal <= Number(advanced.maxBudget)),
       ),
-    [projects, status, city, manager],
+    [projects, status, city, manager, advanced],
   )
+
+  /* Shown on the toggle so it is obvious the list is narrowed by filters
+     that are currently collapsed out of view. */
+  const advancedCount =
+    (advanced.lifecycle !== 'Any' ? 1 : 0) +
+    (advanced.minBudget ? 1 : 0) +
+    (advanced.maxBudget ? 1 : 0)
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PROJECTS_PER_PAGE))
   const safePage = Math.min(page, totalPages)
@@ -64,6 +100,26 @@ export default function Projects() {
   const onFilter = (setter) => (value) => {
     setter(value)
     setPage(1)
+  }
+
+  /**
+   * Live progress tracking. Committed on blur rather than on every keystroke,
+   * so dragging the number from 30 to 65 is one write, not thirty-five.
+   */
+  const commitProgress = async (project, value) => {
+    const next = Math.max(0, Math.min(100, Math.round(Number(value) || 0)))
+    if (next === project.progress) return
+
+    setSavingId(project.id)
+    try {
+      await updateProjectProgress(project.id, next, authUser?.uid)
+      toast(`${project.name} set to ${next}% complete.`)
+      projectsQuery.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setSavingId(null)
+    }
   }
 
   return (
@@ -100,17 +156,94 @@ export default function Projects() {
 
         <button
           type="button"
-          onClick={() =>
-            toast('Advanced filters are not available in this prototype.', {
-              tone: 'info',
-            })
-          }
+          onClick={() => setAdvancedOpen((v) => !v)}
+          aria-expanded={advancedOpen}
           className="focus-ring ml-auto inline-flex items-center gap-1.5 rounded-[8px] px-2 py-1.5 text-[12px] font-medium text-ink-2 transition-colors hover:bg-subtle"
         >
           <SlidersHorizontal className="size-3.5" strokeWidth={1.75} />
           Advanced Filters
+          {advancedCount ? (
+            <span className="tnum rounded-full bg-brand-600 px-1.5 text-[10px] font-bold text-on-brand">
+              {advancedCount}
+            </span>
+          ) : null}
         </button>
       </div>
+
+      {advancedOpen ? (
+        <Card className="mb-5 p-4">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div>
+              <label htmlFor="af-lifecycle" className="eyebrow mb-1.5 block">
+                Lifecycle Stage
+              </label>
+              <select
+                id="af-lifecycle"
+                value={advanced.lifecycle}
+                onChange={(e) => {
+                  setAdvanced((a) => ({ ...a, lifecycle: e.target.value }))
+                  setPage(1)
+                }}
+                className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+              >
+                <option>Any</option>
+                {Object.keys(LIFECYCLE).map((k) => (
+                  <option key={k}>{k}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="af-min" className="eyebrow mb-1.5 block">
+                Min Budget (₹)
+              </label>
+              <input
+                id="af-min"
+                type="number"
+                min="0"
+                step="100000"
+                value={advanced.minBudget}
+                onChange={(e) => {
+                  setAdvanced((a) => ({ ...a, minBudget: e.target.value }))
+                  setPage(1)
+                }}
+                placeholder="0"
+                className="focus-ring tnum h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4"
+              />
+            </div>
+            <div>
+              <label htmlFor="af-max" className="eyebrow mb-1.5 block">
+                Max Budget (₹)
+              </label>
+              <input
+                id="af-max"
+                type="number"
+                min="0"
+                step="100000"
+                value={advanced.maxBudget}
+                onChange={(e) => {
+                  setAdvanced((a) => ({ ...a, maxBudget: e.target.value }))
+                  setPage(1)
+                }}
+                placeholder="No limit"
+                className="focus-ring tnum h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4"
+              />
+            </div>
+          </div>
+
+          {advancedCount ? (
+            <button
+              type="button"
+              onClick={() => {
+                setAdvanced({ lifecycle: 'Any', minBudget: '', maxBudget: '' })
+                setPage(1)
+              }}
+              className="focus-ring mt-3 rounded text-[12px] font-semibold text-brand-ink hover:underline"
+            >
+              Clear advanced filters
+            </button>
+          ) : null}
+        </Card>
+      ) : null}
 
       <QueryBoundary
         isLoading={projectsQuery.isLoading}
@@ -156,9 +289,24 @@ export default function Projects() {
                     {project.client}
                   </p>
                 </div>
-                <span className="tnum shrink-0 text-[13px] font-bold text-ink">
-                  {project.progress}%
-                </span>
+                {/* Editable in place: progress is the field a PM touches
+                    most, and a dialog for one number is friction. */}
+                <label className="flex shrink-0 items-center gap-1">
+                  <span className="sr-only">{project.name} progress percent</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    defaultValue={project.progress}
+                    disabled={savingId === project.id}
+                    onBlur={(e) => commitProgress(project, e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') e.currentTarget.blur()
+                    }}
+                    className="focus-ring tnum w-11 rounded-[6px] border border-transparent bg-transparent px-1 py-0.5 text-right text-[13px] font-bold text-ink hover:border-line focus:border-line disabled:opacity-50"
+                  />
+                  <span className="text-[13px] font-bold text-ink">%</span>
+                </label>
               </div>
 
               <div className="my-4 h-px bg-line" />

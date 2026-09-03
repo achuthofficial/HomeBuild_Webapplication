@@ -106,3 +106,97 @@ export async function listMilestones(projectId) {
     statusKey: r.status,
   }))
 }
+
+/**
+ * Milestone payment workflow (PRD 8.5).
+ *
+ * The legal transitions are enforced in the database by `advance_milestone`,
+ * not here — a milestone cannot be paid before the customer approves, and a
+ * client that tries gets an error rather than a silent skip. Timestamps and
+ * the payment reference are stamped server-side so they cannot be back-dated.
+ */
+export const MILESTONE_ACTIONS = {
+  upcoming: { next: 'pending_verification', label: 'Submit for Verification' },
+  pending_verification: { next: 'approved', label: 'Verify & Approve' },
+  approved: { next: 'paid', label: 'Release Payment' },
+}
+
+export async function advanceMilestone(milestoneId, nextStatus) {
+  requireConfigured()
+  const rows = unwrap(
+    await supabase.rpc('advance_milestone', {
+      p_milestone_id: milestoneId,
+      p_next_status: nextStatus,
+    }),
+  )
+  return Array.isArray(rows) ? rows[0] : rows
+}
+
+/** Sends an approved milestone back for rework. */
+export async function rejectMilestone(milestoneId) {
+  return advanceMilestone(milestoneId, 'upcoming')
+}
+
+/**
+ * "New Invoice" creates the next milestone in the sequence — in PRD terms an
+ * invoice IS a milestone release, so this does not invent a parallel concept.
+ */
+export async function createMilestone({
+  projectId,
+  name,
+  amount,
+  dueDate,
+  contractorId,
+}) {
+  requireConfigured()
+
+  /* Append after the current highest sequence. */
+  const existing = unwrap(
+    await supabase
+      .from('milestones')
+      .select('sequence')
+      .eq('project_id', projectId)
+      .order('sequence', { ascending: false })
+      .limit(1),
+  )
+  const nextSequence = (existing[0]?.sequence ?? 0) + 1
+
+  const project = unwrap(
+    await supabase
+      .from('projects')
+      .select('budget_total')
+      .eq('id', projectId)
+      .single(),
+  )
+
+  const releaseAmount = Math.round(Number(amount) || 0)
+  const total = Number(project.budget_total) || 0
+
+  return unwrap(
+    await supabase
+      .from('milestones')
+      .insert({
+        project_id: projectId,
+        sequence: nextSequence,
+        name: name.trim(),
+        release_amount: releaseAmount,
+        /* Derived rather than asked for: the percentage is a function of the
+           amount and the budget, so making the user type both invites drift. */
+        release_pct: total ? Number(((releaseAmount / total) * 100).toFixed(2)) : null,
+        due_date: dueDate || null,
+        contractor_id: contractorId || null,
+        status: 'pending_verification',
+      })
+      .select('id, name, sequence')
+      .single(),
+  )
+}
+
+/** Contractors available to bill against, for the invoice dialog. */
+export async function listContractorOptions() {
+  requireConfigured()
+  const rows = unwrap(
+    await supabase.from('contractors').select('id, name').order('name'),
+  )
+  return rows
+}

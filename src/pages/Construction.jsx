@@ -15,7 +15,15 @@ import { useToast } from '@/context/ToastContext'
 import { aiInsights, activityBreakdown } from '@/data/siteFeed'
 import QueryBoundary, { RowSkeleton } from '@/components/ui/QueryBoundary'
 import { useQuery } from '@/hooks/useQuery'
-import { listFeedEntries, listFeedCategories, attachPhoto } from '@/api/siteFeed'
+import {
+  listFeedEntries,
+  listFeedCategories,
+  attachPhoto,
+  createSiteUpdate,
+  listProjectOptions,
+  WORK_CATEGORIES,
+} from '@/api/siteFeed'
+import { FormMessage } from '@/components/auth/AuthForm'
 import { onImageError } from '@/lib/imageFallback'
 import { useAuth } from '@/context/AuthContext'
 import { uploadSitePhoto } from '@/lib/storage'
@@ -41,6 +49,15 @@ export default function Construction() {
   const [lightbox, setLightbox] = useState(null)
 
   const [uploadingFor, setUploadingFor] = useState(null)
+  const [posting, setPosting] = useState(false)
+  const [postError, setPostError] = useState(null)
+  const [draft, setDraft] = useState({
+    projectId: '',
+    workCategory: WORK_CATEGORIES[0],
+    location: '',
+    notes: '',
+    status: 'in_progress',
+  })
   const fileInput = useRef(null)
   /* Which entry the hidden file input is currently acting for. */
   const pendingEntry = useRef(null)
@@ -50,6 +67,41 @@ export default function Construction() {
      storage prefixes. */
   const feed = useQuery(() => listFeedEntries({ category: filter }), [filter])
   const categories = useQuery(() => listFeedCategories(), [])
+  const projectOptions = useQuery(() => listProjectOptions(), [], {
+    enabled: updateOpen,
+  })
+
+  /** Posts a real site update (PRD 8.3) rather than claiming one was posted. */
+  const postUpdate = async (e) => {
+    e.preventDefault()
+    setPostError(null)
+
+    if (!draft.projectId) {
+      setPostError('Choose which project this update belongs to.')
+      return
+    }
+
+    setPosting(true)
+    try {
+      await createSiteUpdate({
+        projectId: draft.projectId,
+        supervisorUid: authUser?.uid,
+        workCategory: draft.workCategory,
+        location: draft.location,
+        notes: draft.notes,
+        status: draft.status,
+      })
+      setPosting(false)
+      setUpdateOpen(false)
+      setDraft((d) => ({ ...d, location: '', notes: '' }))
+      toast('Site update posted to the feed.')
+      feed.refetch()
+      categories.refetch()
+    } catch (error) {
+      setPosting(false)
+      setPostError(error.message)
+    }
+  }
   const feedFilters = categories.data ?? ['All Activity']
 
   const openPicker = (entryId) => {
@@ -337,40 +389,90 @@ export default function Construction() {
             </Button>
             <Button
               variant="success"
-              onClick={() => {
-                setUpdateOpen(false)
-                toast('Site update posted to the feed.')
-              }}
+              form="new-update-form"
+              type="submit"
+              disabled={posting}
             >
-              Post Update
+              {posting ? 'Posting…' : 'Post Update'}
             </Button>
           </>
         }
       >
-        <div className="space-y-4">
+        <form id="new-update-form" onSubmit={postUpdate} className="space-y-4">
+          <FormMessage>{postError}</FormMessage>
+
           <div>
-            <label htmlFor="su-cat" className="eyebrow mb-1.5 block">
-              Work Category
+            <label htmlFor="su-project" className="eyebrow mb-1.5 block">
+              Project
             </label>
             <select
-              id="su-cat"
-              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px]"
+              id="su-project"
+              value={draft.projectId}
+              onChange={(e) => setDraft((d) => ({ ...d, projectId: e.target.value }))}
+              required
+              disabled={posting}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
             >
-              {feedFilters.slice(1).map((f) => (
-                <option key={f}>{f}</option>
+              <option value="">Select a project…</option>
+              {(projectOptions.data ?? []).map((proj) => (
+                <option key={proj.id} value={proj.id}>
+                  {proj.name}
+                </option>
               ))}
             </select>
           </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="su-cat" className="eyebrow mb-1.5 block">
+                Work Category
+              </label>
+              <select
+                id="su-cat"
+                value={draft.workCategory}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, workCategory: e.target.value }))
+                }
+                disabled={posting}
+                className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+              >
+                {WORK_CATEGORIES.map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="su-status" className="eyebrow mb-1.5 block">
+                Work Status
+              </label>
+              <select
+                id="su-status"
+                value={draft.status}
+                onChange={(e) => setDraft((d) => ({ ...d, status: e.target.value }))}
+                disabled={posting}
+                className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+              >
+                <option value="in_progress">In Progress</option>
+                <option value="done">Done</option>
+                <option value="blocked">Blocked</option>
+              </select>
+            </div>
+          </div>
+
           <div>
             <label htmlFor="su-loc" className="eyebrow mb-1.5 block">
               Location on Site
             </label>
             <input
               id="su-loc"
+              value={draft.location}
+              onChange={(e) => setDraft((d) => ({ ...d, location: e.target.value }))}
               placeholder="e.g. East Wing, Level 4"
-              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] placeholder:text-ink-4"
+              disabled={posting}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4"
             />
           </div>
+
           <div>
             <label htmlFor="su-note" className="eyebrow mb-1.5 block">
               Supervisor Note
@@ -378,11 +480,18 @@ export default function Construction() {
             <textarea
               id="su-note"
               rows={4}
+              value={draft.notes}
+              onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
               placeholder="Describe what happened on site…"
-              className="focus-ring w-full resize-none rounded-[8px] border border-line bg-surface px-3 py-2 text-[13px] placeholder:text-ink-4"
+              disabled={posting}
+              className="focus-ring w-full resize-none rounded-[8px] border border-line bg-surface px-3 py-2 text-[13px] text-ink placeholder:text-ink-4"
             />
           </div>
-        </div>
+
+          <p className="text-[11.5px] leading-relaxed text-ink-3">
+            Photos are added to the entry after posting, from its upload slots.
+          </p>
+        </form>
       </Modal>
 
       {/* ---------------- photo lightbox ---------------- */}

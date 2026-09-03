@@ -133,3 +133,50 @@ function isoWeek(date) {
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
   return Math.ceil(((d - yearStart) / 86400000 + 1) / 7)
 }
+
+/**
+ * Phase status changes.
+ *
+ * Marking a phase done fires the rollup trigger, so the project's progress
+ * percentage and the dashboard KPI follow automatically — the figure is
+ * derived in one place rather than being maintained by each caller.
+ */
+export const PHASE_ACTIONS = [
+  { key: 'in_progress', label: 'Mark in progress' },
+  { key: 'done', label: 'Mark complete' },
+  { key: 'on_hold', label: 'Put on hold' },
+  { key: 'delayed', label: 'Flag as delayed' },
+]
+
+export async function setPhaseStatus(phaseId, status, { delayDays } = {}) {
+  requireConfigured()
+
+  const patch = { status }
+  /* Flagging a delay with no figure defaults to a week, which is the smallest
+     unit the Gantt can actually show. */
+  if (status === 'delayed') patch.delay_days = delayDays ?? 7
+  if (status === 'done') patch.delay_days = 0
+
+  return unwrap(
+    await supabase
+      .from('schedule_phases')
+      .update(patch)
+      .eq('id', phaseId)
+      .select('id, name, status, delay_days, project_id')
+      .single(),
+  )
+}
+
+/**
+ * Recalculates the forecast timeline (PRD 5.4.3).
+ *
+ * Rule-based only — cumulative delay pushed into later phases, plus the
+ * documented monsoon buffer. No model involved.
+ */
+export async function applyForecast(projectId) {
+  requireConfigured()
+  const shifted = unwrap(
+    await supabase.rpc('apply_schedule_forecast', { p_project_id: projectId }),
+  )
+  return typeof shifted === 'number' ? shifted : 0
+}

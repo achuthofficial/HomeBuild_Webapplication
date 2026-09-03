@@ -26,6 +26,10 @@ import EditProfileModal from '@/components/shared/EditProfileModal'
 import QueryBoundary, { RowSkeleton } from '@/components/ui/QueryBoundary'
 import { useQuery } from '@/hooks/useQuery'
 import { getProfile, listTeamMembers } from '@/api/profiles'
+import { listInvitations, createInvitation, revokeInvitation } from '@/api/invitations'
+import { listActivity } from '@/api/activity'
+import { longDate } from '@/lib/format'
+import { FormMessage } from '@/components/auth/AuthForm'
 import { uploadAvatar } from '@/lib/storage'
 import { isStorageConfigured } from '@/lib/supabaseStorage'
 import { onAvatarError } from '@/lib/imageFallback'
@@ -55,6 +59,13 @@ export default function SettingsPage() {
   const [verifying, setVerifying] = useState(false)
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  /* Declared here, above the queries that gate on them — a query using a
+     flag declared further down hits the temporal dead zone at render. */
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [memberMenu, setMemberMenu] = useState(null)
+  const [inviting, setInviting] = useState(false)
+  const [inviteError, setInviteError] = useState(null)
+  const [invite, setInvite] = useState({ email: '', role: 'project_manager' })
 
   /* Role, phone and job title live in Supabase — Firebase has nowhere to put
      them — so the profile card reads from both sources. */
@@ -69,6 +80,47 @@ export default function SettingsPage() {
     { enabled: Boolean(authUser?.uid) },
   )
   const profile = profileQuery.data
+
+  const invitations = useQuery(() => listInvitations(), [], {
+    enabled: inviteOpen,
+  })
+
+  const memberActivity = useQuery(
+    () => listActivity({ actorUid: memberMenu.id, limit: 10 }),
+    [memberMenu?.id],
+    { enabled: Boolean(memberMenu?.id) },
+  )
+
+  const sendInvite = async (e) => {
+    e.preventDefault()
+    setInviteError(null)
+    setInviting(true)
+
+    try {
+      await createInvitation({
+        email: invite.email,
+        role: invite.role,
+        invitedBy: authUser?.uid,
+      })
+      setInviting(false)
+      setInvite({ email: '', role: 'project_manager' })
+      toast(`Invitation recorded for ${invite.email}.`)
+      invitations.refetch()
+    } catch (error) {
+      setInviting(false)
+      setInviteError(error.message)
+    }
+  }
+
+  const revoke = async (invitation) => {
+    try {
+      await revokeInvitation(invitation.id)
+      toast(`Invitation for ${invitation.email} revoked.`)
+      invitations.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    }
+  }
   const avatarInput = useRef(null)
 
   /**
@@ -103,8 +155,6 @@ export default function SettingsPage() {
       { tone: profileError ? 'info' : 'success' },
     )
   }
-  const [inviteOpen, setInviteOpen] = useState(false)
-  const [memberMenu, setMemberMenu] = useState(null)
 
   /* Briefly enable colour transitions so a theme switch cross-fades instead of
      snapping. The class is removed afterwards so ordinary interactions (hover,
@@ -462,17 +512,18 @@ export default function SettingsPage() {
             </Button>
             <Button
               variant="primary"
-              onClick={() => {
-                setInviteOpen(false)
-                toast('Invitation sent.')
-              }}
+              form="invite-form"
+              type="submit"
+              disabled={inviting}
             >
-              Send Invite
+              {inviting ? 'Creating…' : 'Send Invite'}
             </Button>
           </>
         }
       >
-        <div className="space-y-4">
+        <form id="invite-form" onSubmit={sendInvite} className="space-y-4">
+          <FormMessage>{inviteError}</FormMessage>
+
           <div>
             <label htmlFor="inv-email" className="eyebrow mb-1.5 block">
               Email Address
@@ -480,29 +531,71 @@ export default function SettingsPage() {
             <input
               id="inv-email"
               type="email"
+              value={invite.email}
+              onChange={(e) => setInvite((v) => ({ ...v, email: e.target.value }))}
               placeholder="name@company.com"
-              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] placeholder:text-ink-4"
+              required
+              disabled={inviting}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4"
             />
           </div>
+
           <div>
             <label htmlFor="inv-role" className="eyebrow mb-1.5 block">
               Role
             </label>
             <select
               id="inv-role"
-              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px]"
+              value={invite.role}
+              onChange={(e) => setInvite((v) => ({ ...v, role: e.target.value }))}
+              disabled={inviting}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
             >
-              {[
-                'Project Manager',
-                'Site Supervisor',
-                'Architect',
-                'Customer',
-              ].map((r) => (
-                <option key={r}>{r}</option>
-              ))}
+              {/* The three PRD section 4 personas — these match the CHECK
+                  constraint on the column. */}
+              <option value="project_manager">Project Manager</option>
+              <option value="site_supervisor">Site Supervisor</option>
+              <option value="customer">Customer</option>
             </select>
           </div>
-        </div>
+
+          {/* Honest about the limit rather than implying an email went out. */}
+          <p className="rounded-[8px] border border-line bg-subtle/60 px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-2">
+            The invitation is recorded and expires in 7 days. Email delivery
+            needs a mail provider that is not configured in this build, so
+            share the link manually for now.
+          </p>
+
+          {(invitations.data ?? []).length ? (
+            <div className="border-t border-line pt-3">
+              <p className="eyebrow mb-2">Pending invitations</p>
+              <ul className="space-y-1.5">
+                {(invitations.data ?? [])
+                  .filter((i) => i.status === 'pending')
+                  .map((i) => (
+                    <li
+                      key={i.id}
+                      className="flex items-center justify-between gap-3 text-[12px]"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-ink-2">
+                        {i.email}
+                        {i.isExpired ? (
+                          <span className="ml-1.5 text-danger">expired</span>
+                        ) : null}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => revoke(i)}
+                        className="focus-ring shrink-0 rounded font-semibold text-danger hover:underline"
+                      >
+                        Revoke
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ) : null}
+        </form>
       </Modal>
 
       <Modal
@@ -512,29 +605,38 @@ export default function SettingsPage() {
         description={memberMenu?.role ?? ''}
         size="sm"
       >
-        <div className="space-y-1">
-          {['Change Role', 'Reset Password', 'Deactivate Member'].map(
-            (action) => (
-              <button
-                key={action}
-                type="button"
-                onClick={() => {
-                  setMemberMenu(null)
-                  toast(`${action} — not wired up in this prototype.`, {
-                    tone: 'info',
-                  })
-                }}
-                className={cn(
-                  'focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] transition-colors hover:bg-subtle',
-                  action.startsWith('Deactivate')
-                    ? 'text-danger hover:bg-danger-bg/50'
-                    : 'text-ink-2 hover:text-ink',
-                )}
-              >
-                {action}
-              </button>
-            ),
-          )}
+        <div className="space-y-3">
+          <QueryBoundary
+            isLoading={memberActivity.isLoading}
+            error={memberActivity.error}
+            data={memberActivity.data}
+            onRetry={memberActivity.refetch}
+            emptyTitle="No recorded activity"
+            emptyBody="Changes this person makes will be listed here."
+            skeleton={<RowSkeleton rows={2} />}
+          >
+            <div>
+              <p className="eyebrow mb-2">Recent activity</p>
+              <ol className="space-y-2">
+                {(memberActivity.data ?? []).slice(0, 6).map((entry) => (
+                  <li key={entry.id} className="text-[12.5px] leading-snug text-ink-2">
+                    {entry.summary}
+                    <span className="ml-1 text-ink-4">· {longDate(entry.at)}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </QueryBoundary>
+
+          {/* Role changes are absent rather than faked: the security policy
+              lets a user modify only their own profile, so editing someone
+              else's needs an admin role this app does not have yet. Saying so
+              beats a button that always fails. */}
+          <p className="border-t border-line pt-3 text-[11.5px] leading-relaxed text-ink-3">
+            Changing another member’s role or deactivating them needs an
+            administrator role, which isn’t part of the permission model yet.
+            Each person sets their own role from their profile.
+          </p>
         </div>
       </Modal>
     </div>

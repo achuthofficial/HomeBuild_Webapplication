@@ -93,3 +93,51 @@ export async function listTradeFilters() {
     .map((t) => t.charAt(0) + t.slice(1).toLowerCase())
   return ['All Trades', ...trades]
 }
+
+/**
+ * Contractor record updates — the row action sheet.
+ *
+ * Deactivating sets compliance to false rather than deleting: PRD goal 4
+ * treats the vetted network as an asset, and a contractor's history has to
+ * survive them going inactive.
+ */
+export async function updateContractor(id, { rating, score, complianceOk, kind }) {
+  requireConfigured()
+
+  const patch = {}
+  if (rating != null) patch.rating = rating
+  if (score != null) patch.score = score
+  if (complianceOk != null) patch.compliance_ok = complianceOk
+  if (kind) patch.kind = kind
+
+  return unwrap(
+    await supabase
+      .from('contractors')
+      .update(patch)
+      .eq('id', id)
+      .select('id, name, rating, score, compliance_ok, kind')
+      .single(),
+  )
+}
+
+/** Which projects a contractor is currently on — the row detail view. */
+export async function getContractorDetail(id) {
+  requireConfigured()
+  const row = unwrap(
+    await supabase
+      .from('contractors')
+      .select(`
+        id, code, name, trade, rating, score, kind, compliance_ok, score_history,
+        contractor_assignments ( projects ( id, name, progress_pct, city ) )
+      `)
+      .eq('id', id)
+      .single(),
+  )
+
+  return {
+    ...row,
+    projects: (row.contractor_assignments ?? [])
+      .map((a) => a.projects)
+      .filter(Boolean),
+  }
+}

@@ -102,24 +102,186 @@ export async function getProject(id) {
 }
 
 /**
- * Creates a project from the topbar dialog. Only the fields that dialog
- * collects; everything else takes its column default.
+ * Creates a project with the full PRD 8.1 field set.
+ *
+ * A new project also gets the default construction phases from PRD 5.4.2, so
+ * its Gantt is populated from the start rather than being an empty chart the
+ * user has to fill in before the Schedule screen means anything.
  */
-export async function createProject({ name, client, city, budget, managerUid }) {
+export async function createProject({
+  name,
+  client,
+  city,
+  budget,
+  managerUid,
+  plotAddress,
+  plotLengthFt,
+  plotWidthFt,
+  plotFacing,
+  totalFloors,
+  bhkPerFloor,
+  startDate,
+  expectedCompletion,
+  seedPhases = true,
+}) {
   requireConfigured()
+
   const row = unwrap(
     await supabase
       .from('projects')
       .insert({
-        name,
-        client_name: client || null,
+        name: name.trim(),
+        client_name: client?.trim() || null,
         city: city || null,
-        budget_total: budget ? Number(budget) : 0,
+        budget_total: budget ? Math.round(Number(budget)) : 0,
         manager_uid: managerUid ?? null,
+        plot_address: plotAddress?.trim() || null,
+        plot_length_ft: plotLengthFt ? Number(plotLengthFt) : null,
+        plot_width_ft: plotWidthFt ? Number(plotWidthFt) : null,
+        plot_facing: plotFacing || null,
+        total_floors: totalFloors || null,
+        bhk_per_floor: bhkPerFloor ? Number(bhkPerFloor) : null,
+        start_date: startDate || null,
+        expected_completion: expectedCompletion || null,
+        /* PRD lifecycle starts at `lead`, not `active` — a project becomes
+           active once design is signed off. */
         status: 'lead',
       })
       .select(PROJECT_SELECT)
       .single(),
   )
+
+  if (seedPhases) {
+    /* Non-fatal: a project without phases is still usable, and failing the
+       whole creation over the template would be worse than an empty Gantt. */
+    try {
+      await seedDefaultPhases(row.id, budget ? Number(budget) : 0)
+    } catch (error) {
+      console.error('[projects] could not seed default phases', error)
+    }
+  }
+
+  /* The creator is a member, so the project is not team-less on day one. */
+  if (managerUid) {
+    await supabase
+      .from('project_members')
+      .insert({ project_id: row.id, member_uid: managerUid, role: 'manager' })
+      .then(null, () => {})
+  }
+
+  return toProject(row)
+}
+
+/**
+ * The 60-week template from PRD 5.4.2, compressed onto the 12-week window the
+ * Gantt draws. Costs are the PRD's proportions applied to the actual budget,
+ * so a ₹50L project does not inherit the document's ₹87L example figures.
+ */
+const PHASE_TEMPLATE = [
+  ['Site Preparation',      '1. Foundations',           0.0,  0.4,  2.5],
+  ['Foundation',            '1. Foundations',           0.4,  1.6,  8.5],
+  ['Ground Floor Structure','2. Structural Framing',    1.6,  3.2, 14.0],
+  ['First Floor Structure', '2. Structural Framing',    3.2,  4.8, 14.0],
+  ['Roof Slab',             '2. Structural Framing',    4.8,  6.0, 10.0],
+  ['Brick & Block Work',    '3. MEP Installation',      6.0,  7.6,  7.0],
+  ['Plastering',            '3. MEP Installation',      7.6,  8.8,  5.0],
+  ['MEP Works',             '3. MEP Installation',      7.6,  9.2, 14.0],
+  ['Flooring & Tiling',     '4. Interior Finishing',    8.8, 10.4,  6.0],
+  ['Painting & Finishing',  '4. Interior Finishing',   10.4, 11.6,  5.0],
+  ['Final Handover',        '4. Interior Finishing',   11.6, 12.0,  1.0],
+]
+
+/** Template costs total ₹91L in the PRD; used to scale to the real budget. */
+const TEMPLATE_TOTAL_LAKH = PHASE_TEMPLATE.reduce((sum, p) => sum + p[4], 0)
+
+async function seedDefaultPhases(projectId, budgetTotal) {
+  const rows = PHASE_TEMPLATE.map(([name, group, start, end, lakh], i) => ({
+    project_id: projectId,
+    sequence: i + 1,
+    name,
+    phase_group: group,
+    baseline_start_week: start,
+    baseline_end_week: end,
+    cost: budgetTotal
+      ? Math.round((lakh / TEMPLATE_TOTAL_LAKH) * budgetTotal)
+      : Math.round(lakh * 100000),
+    status: 'queued',
+  }))
+
+  return unwrap(await supabase.from('schedule_phases').insert(rows).select('id'))
+}
+
+/**
+ * Live progress tracking.
+ *
+ * progress_pct is normally derived from completed phases by a database
+ * trigger. This is the manual override for a PM who knows better than the
+ * phase data — it writes the figure directly and records who did.
+ */
+export async function updateProjectProgress(projectId, progressPct, actorUid) {
+  requireConfigured()
+
+  const pct = Math.max(0, Math.min(100, Math.round(Number(progressPct) || 0)))
+
+  const row = unwrap(
+    await supabase
+      .from('projects')
+      .update({ progress_pct: pct })
+      .eq('id', projectId)
+      .select(PROJECT_SELECT)
+      .single(),
+  )
+
+  await supabase.from('activity_log').insert({
+    project_id: projectId,
+    actor_uid: actorUid,
+    entity: 'project',
+    entity_id: projectId,
+    action: 'progress_updated',
+    summary: `Progress set to ${pct}%`,
+  })
+
+  return toProject(row)
+}
+
+/** Status, timeline and budget flags — the chips on the portfolio card. */
+export async function updateProjectStatus(
+  projectId,
+  { status, timelineStatus, budgetStatus },
+  actorUid,
+) {
+  requireConfigured()
+
+  const patch = {}
+  if (status) patch.status = status
+  if (timelineStatus) patch.timeline_status = timelineStatus
+  if (budgetStatus) patch.budget_status = budgetStatus
+
+  /* A completed project gets its actual completion date stamped, which is the
+     field PRD 8.1 says is filled in on handover. */
+  if (status === 'completed') {
+    patch.actual_completion = new Date().toISOString().slice(0, 10)
+  }
+
+  const row = unwrap(
+    await supabase
+      .from('projects')
+      .update(patch)
+      .eq('id', projectId)
+      .select(PROJECT_SELECT)
+      .single(),
+  )
+
+  await supabase.from('activity_log').insert({
+    project_id: projectId,
+    actor_uid: actorUid,
+    entity: 'project',
+    entity_id: projectId,
+    action: 'status_changed',
+    summary: `Project updated: ${Object.entries(patch)
+      .map(([k, v]) => `${k.replace(/_/g, ' ')} → ${v}`)
+      .join(', ')}`,
+  })
+
   return toProject(row)
 }

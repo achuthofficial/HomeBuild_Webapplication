@@ -1,63 +1,118 @@
 import { useState } from 'react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
+import { FormMessage } from '@/components/auth/AuthForm'
 import { useToast } from '@/context/ToastContext'
+import { useAuth } from '@/context/AuthContext'
 import { useQuery } from '@/hooks/useQuery'
 import { listProjectFilters, createProject } from '@/api/projects'
-import { useAuth } from '@/context/AuthContext'
 
 const field =
-  'focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4'
+  'focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4 disabled:opacity-60'
+
+/** PRD 8.1 vocabularies — these match the CHECK constraints on the table. */
+const FACINGS = ['North', 'South', 'East', 'West']
+const FLOORS = [
+  { value: 'G', label: 'Ground only' },
+  { value: 'G+1', label: 'G+1' },
+  { value: 'G+2', label: 'G+2' },
+  { value: 'G+3', label: 'G+3' },
+]
+const BHK = [1, 2, 3, 4]
+
+function Label({ htmlFor, children }) {
+  return (
+    <label htmlFor={htmlFor} className="eyebrow mb-1.5 block">
+      {children}
+    </label>
+  )
+}
 
 /**
- * "Create New Project" dialog. Nothing is persisted — submitting raises a
- * toast so the primary action in the topbar has a visible outcome.
+ * Create New Project.
+ *
+ * Collects the PRD 8.1 field set rather than just a name and a budget: plot
+ * dimensions, facing, floors and BHK are what the Design module will need to
+ * generate anything, and asking for them at creation avoids a second pass.
+ *
+ * On save the project also gets the PRD 5.4.2 phase template, so its Gantt is
+ * populated immediately instead of being an empty chart.
  */
 export default function CreateProjectModal({ open, onClose, onCreated }) {
   const { toast } = useToast()
   const { authUser } = useAuth()
-  const [name, setName] = useState('')
-  const [client, setClient] = useState('')
-  const [city, setCity] = useState('Bengaluru')
-  const [budget, setBudget] = useState('')
+
+  const [form, setForm] = useState({
+    name: '',
+    client: '',
+    city: 'Bengaluru',
+    plotAddress: '',
+    plotLengthFt: '',
+    plotWidthFt: '',
+    plotFacing: 'East',
+    totalFloors: 'G+1',
+    bhkPerFloor: 2,
+    budget: '',
+    startDate: '',
+    expectedCompletion: '',
+  })
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
 
-  /* Cities come from the projects already in the database rather than a
-     hard-coded list, so the dropdown reflects where work actually is. */
+  const set = (key) => (e) =>
+    setForm((prev) => ({ ...prev, [key]: e.target.value }))
+
+  /* Cities come from projects already in the database rather than a fixed
+     list, so the dropdown reflects where work actually is. */
   const filters = useQuery(() => listProjectFilters(), [], { enabled: open })
-  const cities = (filters.data?.city ?? ['All Locations']).slice(1)
+  const cities = (filters.data?.city ?? []).slice(1)
 
-  const reset = () => {
-    setName('')
-    setClient('')
-    setCity('Bengaluru')
-    setBudget('')
-  }
+  const reset = () =>
+    setForm({
+      name: '',
+      client: '',
+      city: cities[0] ?? 'Bengaluru',
+      plotAddress: '',
+      plotLengthFt: '',
+      plotWidthFt: '',
+      plotFacing: 'East',
+      totalFloors: 'G+1',
+      bhkPerFloor: 2,
+      budget: '',
+      startDate: '',
+      expectedCompletion: '',
+    })
 
   const submit = async (e) => {
     e.preventDefault()
-    setBusy(true)
+    setError(null)
 
-    try {
-      await createProject({
-        name,
-        client,
-        city,
-        budget,
-        managerUid: authUser?.uid ?? null,
-      })
-    } catch (error) {
-      setBusy(false)
-      toast(error.message, { tone: 'info' })
+    /* Caught here rather than by a CHECK constraint, so the message names the
+       fields instead of quoting a constraint. */
+    if (
+      form.startDate &&
+      form.expectedCompletion &&
+      form.expectedCompletion < form.startDate
+    ) {
+      setError('Expected completion cannot be before the start date.')
       return
     }
 
-    setBusy(false)
-    toast(`“${name}” created. Assign a manager to begin.`)
-    reset()
-    onClose?.()
-    /* Let the portfolio refresh rather than waiting for a reload. */
-    onCreated?.()
+    setBusy(true)
+    try {
+      const project = await createProject({
+        ...form,
+        managerUid: authUser?.uid ?? null,
+      })
+      setBusy(false)
+      toast(`“${project.name}” created with its default schedule.`)
+      reset()
+      onClose?.()
+      onCreated?.(project)
+    } catch (failure) {
+      setBusy(false)
+      setError(failure.message)
+    }
   }
 
   return (
@@ -65,10 +120,11 @@ export default function CreateProjectModal({ open, onClose, onCreated }) {
       open={open}
       onClose={onClose}
       title="Create New Project"
-      description="Initialize site plan, budget, and assign your management team."
+      description="Initialise the site plan, budget and schedule."
+      size="lg"
       footer={
         <>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
           <Button
@@ -82,68 +138,205 @@ export default function CreateProjectModal({ open, onClose, onCreated }) {
         </>
       }
     >
-      <form id="create-project-form" onSubmit={submit} className="space-y-4">
-        <div>
-          <label htmlFor="cp-name" className="eyebrow mb-1.5 block">
-            Project Name
-          </label>
-          <input
-            id="cp-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Sky Villa 42"
-            className={field}
-            required
-          />
-        </div>
+      <form id="create-project-form" onSubmit={submit} className="space-y-5">
+        <FormMessage>{error}</FormMessage>
 
-        <div>
-          <label htmlFor="cp-client" className="eyebrow mb-1.5 block">
-            Client
-          </label>
-          <input
-            id="cp-client"
-            value={client}
-            onChange={(e) => setClient(e.target.value)}
-            placeholder="e.g. Global Ventures Inc."
-            className={field}
-          />
-        </div>
+        <section className="space-y-4">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-3">
+            Project
+          </p>
 
-        <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <label htmlFor="cp-city" className="eyebrow mb-1.5 block">
-              City
-            </label>
-            <select
-              id="cp-city"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
+            <Label htmlFor="cp-name">Project Name</Label>
+            <input
+              id="cp-name"
+              value={form.name}
+              onChange={set('name')}
+              placeholder="e.g. Sharma Residence"
               className={field}
-            >
-              {cities.length ? (
-                cities.map((c) => <option key={c}>{c}</option>)
-              ) : (
-                <option>Bengaluru</option>
-              )}
-            </select>
+              required
+              disabled={busy}
+            />
           </div>
 
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="cp-client">Client</Label>
+              <input
+                id="cp-client"
+                value={form.client}
+                onChange={set('client')}
+                placeholder="e.g. Rajesh Sharma"
+                className={field}
+                disabled={busy}
+              />
+            </div>
+            <div>
+              <Label htmlFor="cp-city">City</Label>
+              <input
+                id="cp-city"
+                list="cp-city-options"
+                value={form.city}
+                onChange={set('city')}
+                placeholder="Bengaluru"
+                className={field}
+                disabled={busy}
+              />
+              {/* A datalist rather than a select: a new city must be typeable,
+                  or the first project in a new market cannot be created. */}
+              <datalist id="cp-city-options">
+                {cities.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-4 border-t border-line pt-5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-3">
+            Plot
+          </p>
+
           <div>
-            <label htmlFor="cp-budget" className="eyebrow mb-1.5 block">
-              Budget (₹)
-            </label>
+            <Label htmlFor="cp-address">Plot Address</Label>
+            <input
+              id="cp-address"
+              value={form.plotAddress}
+              onChange={set('plotAddress')}
+              placeholder="Survey no., street, city, PIN"
+              className={field}
+              disabled={busy}
+            />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div>
+              <Label htmlFor="cp-length">Length (ft)</Label>
+              <input
+                id="cp-length"
+                type="number"
+                min="1"
+                value={form.plotLengthFt}
+                onChange={set('plotLengthFt')}
+                placeholder="60"
+                className={`${field} tnum`}
+                disabled={busy}
+              />
+            </div>
+            <div>
+              <Label htmlFor="cp-width">Width (ft)</Label>
+              <input
+                id="cp-width"
+                type="number"
+                min="1"
+                value={form.plotWidthFt}
+                onChange={set('plotWidthFt')}
+                placeholder="40"
+                className={`${field} tnum`}
+                disabled={busy}
+              />
+            </div>
+            <div>
+              <Label htmlFor="cp-facing">Facing</Label>
+              <select
+                id="cp-facing"
+                value={form.plotFacing}
+                onChange={set('plotFacing')}
+                className={field}
+                disabled={busy}
+              >
+                {FACINGS.map((f) => (
+                  <option key={f}>{f}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="cp-floors">Total Floors</Label>
+              <select
+                id="cp-floors"
+                value={form.totalFloors}
+                onChange={set('totalFloors')}
+                className={field}
+                disabled={busy}
+              >
+                {FLOORS.map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <Label htmlFor="cp-bhk">BHK per Floor</Label>
+              <select
+                id="cp-bhk"
+                value={form.bhkPerFloor}
+                onChange={set('bhkPerFloor')}
+                className={field}
+                disabled={busy}
+              >
+                {BHK.map((b) => (
+                  <option key={b} value={b}>
+                    {b} BHK
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-4 border-t border-line pt-5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-3">
+            Budget &amp; Timeline
+          </p>
+
+          <div>
+            <Label htmlFor="cp-budget">Total Budget (₹)</Label>
             <input
               id="cp-budget"
               type="number"
               min="0"
-              value={budget}
-              onChange={(e) => setBudget(e.target.value)}
+              step="1000"
+              value={form.budget}
+              onChange={set('budget')}
               placeholder="12450000"
               className={`${field} tnum`}
+              disabled={busy}
             />
+            <p className="mt-1.5 text-[11.5px] text-ink-3">
+              In rupees. The default phase schedule is costed from this figure.
+            </p>
           </div>
-        </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="cp-start">Start Date</Label>
+              <input
+                id="cp-start"
+                type="date"
+                value={form.startDate}
+                onChange={set('startDate')}
+                className={field}
+                disabled={busy}
+              />
+            </div>
+            <div>
+              <Label htmlFor="cp-end">Expected Completion</Label>
+              <input
+                id="cp-end"
+                type="date"
+                value={form.expectedCompletion}
+                onChange={set('expectedCompletion')}
+                className={field}
+                disabled={busy}
+              />
+            </div>
+          </div>
+        </section>
       </form>
     </Modal>
   )

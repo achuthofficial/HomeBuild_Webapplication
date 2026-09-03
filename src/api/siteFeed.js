@@ -139,3 +139,27 @@ export async function attachPhoto({ siteUpdateId, storagePath, uploadedBy }) {
       .single(),
   )
 }
+
+/** Projects to post an update against, for the New Update dialog. */
+export async function listProjectOptions() {
+  requireConfigured()
+  return unwrap(
+    await supabase
+      .from('projects')
+      .select('id, name')
+      .in('status', ['active', 'in_design', 'lead'])
+      .order('name'),
+  )
+}
+
+/** Work categories offered in the dialog, per PRD 8.3's examples. */
+export const WORK_CATEGORIES = [
+  'Slab Casting',
+  'MEP Installation',
+  'Structural Steel',
+  'Electrical',
+  'Brickwork',
+  'Plastering',
+  'Flooring',
+  'Painting',
+]

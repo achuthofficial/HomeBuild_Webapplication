@@ -11,11 +11,18 @@ import DonutChart from '@/components/charts/DonutChart'
 import AreaTrend from '@/components/charts/AreaTrend'
 import { cn } from '@/lib/cn'
 import QueryBoundary, { KpiSkeleton, Skeleton, RowSkeleton } from '@/components/ui/QueryBoundary'
+import { FormMessage } from '@/components/auth/AuthForm'
+import { downloadCsv } from '@/lib/csv'
+import { listActivity } from '@/api/activity'
 import { rupees, longDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
 import { useQuery } from '@/hooks/useQuery'
 import { Wallet, Banknote, PiggyBank } from 'lucide-react'
 import {
+  MILESTONE_ACTIONS,
+  advanceMilestone,
+  createMilestone,
+  listContractorOptions,
   getPrimaryProjectId,
   getFinanceSummary,
   getBudgetTrend,
@@ -103,6 +110,16 @@ export default function Finance() {
   const [range, setRange] = useState(trendRanges[0])
   const [invoiceOpen, setInvoiceOpen] = useState(false)
   const [menuFor, setMenuFor] = useState(null)
+  const [advancing, setAdvancing] = useState(false)
+  const [raising, setRaising] = useState(false)
+  const [ledgerOpen, setLedgerOpen] = useState(false)
+  const [invoiceError, setInvoiceError] = useState(null)
+  const [invoice, setInvoice] = useState({
+    name: '',
+    amount: '',
+    dueDate: '',
+    contractorId: '',
+  })
 
   /* The finance screen is per-project. Resolve which project first, then fetch
      its figures — the dependent queries stay disabled until it lands. */
@@ -129,6 +146,65 @@ export default function Finance() {
     [projectId],
     { enabled: Boolean(projectId) },
   )
+  const contractorOptions = useQuery(() => listContractorOptions(), [], {
+    enabled: invoiceOpen,
+  })
+  /* Only fetched when the drawer opens — nobody reads the ledger every visit. */
+  const ledger = useQuery(
+    () => listActivity({ projectId, limit: 50 }),
+    [projectId, ledgerOpen],
+    { enabled: Boolean(projectId) && ledgerOpen },
+  )
+
+  /**
+   * Moves a milestone to its next state.
+   *
+   * The transition rules live in the database, so an illegal move comes back
+   * as an error rather than being silently allowed — this just surfaces it.
+   */
+  const raiseInvoice = async (e) => {
+    e.preventDefault()
+    setInvoiceError(null)
+    setRaising(true)
+
+    try {
+      await createMilestone({
+        projectId,
+        name: invoice.name,
+        amount: invoice.amount,
+        dueDate: invoice.dueDate,
+        contractorId: invoice.contractorId || null,
+      })
+      setRaising(false)
+      setInvoiceOpen(false)
+      setInvoice({ name: '', amount: '', dueDate: '', contractorId: '' })
+      toast(`“${invoice.name}” raised and sent for verification.`)
+      milestones.refetch()
+    } catch (error) {
+      setRaising(false)
+      setInvoiceError(error.message)
+    }
+  }
+
+  const advance = async (milestone, nextStatus) => {
+    setAdvancing(true)
+    try {
+      await advanceMilestone(milestone.id, nextStatus)
+      setMenuFor(null)
+      toast(
+        nextStatus === 'paid'
+          ? `Payment released for “${milestone.milestone}”.`
+          : `“${milestone.milestone}” moved to ${nextStatus.replace(/_/g, ' ')}.`,
+      )
+      milestones.refetch()
+      /* A paid milestone changes budget_consumed via a trigger. */
+      summary.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setAdvancing(false)
+    }
+  }
 
   return (
     <>
@@ -140,7 +216,21 @@ export default function Finance() {
             <Button
               variant="outline"
               icon={Download}
-              onClick={() => toast('Financial report exported as PDF.')}
+              onClick={() => {
+                const rows = milestones.data ?? []
+                const count = downloadCsv(
+                  'homebuild-milestones',
+                  [
+                    { key: 'milestone', label: 'Milestone' },
+                    { key: 'contractor', label: 'Contractor' },
+                    { key: 'dueDate', label: 'Due Date' },
+                    { key: 'amount', label: 'Amount (INR)' },
+                    { key: 'statusKey', label: 'Status' },
+                  ],
+                  rows,
+                )
+                toast(`Exported ${count} milestone${count === 1 ? '' : 's'} as CSV.`)
+              }}
             >
               Export Report
             </Button>
@@ -235,7 +325,7 @@ export default function Finance() {
           </h2>
           <button
             type="button"
-            onClick={() => toast('Full payment ledger is not in this prototype.', { tone: 'info' })}
+            onClick={() => setLedgerOpen(true)}
             className="focus-ring rounded text-[12px] font-semibold text-brand-ink hover:underline"
           >
             View All
@@ -304,50 +394,147 @@ export default function Finance() {
         open={invoiceOpen}
         onClose={() => setInvoiceOpen(false)}
         title="New Invoice"
-        description="Raise an invoice against a verified milestone."
+        description="Raise a milestone release against this project."
         footer={
           <>
-            <Button variant="outline" onClick={() => setInvoiceOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setInvoiceOpen(false)}
+              disabled={raising}
+            >
               Cancel
             </Button>
             <Button
               variant="warning"
-              onClick={() => {
-                setInvoiceOpen(false)
-                toast('Invoice raised and sent for PM sign-off.')
-              }}
+              form="new-invoice-form"
+              type="submit"
+              disabled={raising}
             >
-              Raise Invoice
+              {raising ? 'Raising…' : 'Raise Invoice'}
             </Button>
           </>
         }
       >
-        <div className="space-y-4">
+        {/* In PRD terms an invoice IS a milestone release, so this creates one
+            rather than inventing a parallel concept that never reconciles. */}
+        <form id="new-invoice-form" onSubmit={raiseInvoice} className="space-y-4">
+          <FormMessage>{invoiceError}</FormMessage>
+
           <div>
-            <label htmlFor="inv-ms" className="eyebrow mb-1.5 block">
-              Milestone
+            <label htmlFor="inv-name" className="eyebrow mb-1.5 block">
+              Milestone Name
+            </label>
+            <input
+              id="inv-name"
+              value={invoice.name}
+              onChange={(e) => setInvoice((v) => ({ ...v, name: e.target.value }))}
+              placeholder="e.g. Roof Slab Sign-off"
+              required
+              disabled={raising}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="inv-contractor" className="eyebrow mb-1.5 block">
+              Contractor
             </label>
             <select
-              id="inv-ms"
-              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px]"
+              id="inv-contractor"
+              value={invoice.contractorId}
+              onChange={(e) =>
+                setInvoice((v) => ({ ...v, contractorId: e.target.value }))
+              }
+              disabled={raising}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
             >
-              {(milestones.data ?? []).map((m) => (
-                <option key={m.id}>{m.milestone}</option>
+              <option value="">Unassigned</option>
+              {(contractorOptions.data ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
               ))}
             </select>
           </div>
-          <div>
-            <label htmlFor="inv-amt" className="eyebrow mb-1.5 block">
-              Amount (₹)
-            </label>
-            <input
-              id="inv-amt"
-              type="number"
-              defaultValue={450000}
-              className="focus-ring tnum h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px]"
-            />
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="inv-amt" className="eyebrow mb-1.5 block">
+                Amount (₹)
+              </label>
+              <input
+                id="inv-amt"
+                type="number"
+                min="1"
+                step="1000"
+                value={invoice.amount}
+                onChange={(e) =>
+                  setInvoice((v) => ({ ...v, amount: e.target.value }))
+                }
+                required
+                disabled={raising}
+                className="focus-ring tnum h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+              />
+            </div>
+            <div>
+              <label htmlFor="inv-due" className="eyebrow mb-1.5 block">
+                Due Date
+              </label>
+              <input
+                id="inv-due"
+                type="date"
+                value={invoice.dueDate}
+                onChange={(e) =>
+                  setInvoice((v) => ({ ...v, dueDate: e.target.value }))
+                }
+                disabled={raising}
+                className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+              />
+            </div>
           </div>
-        </div>
+
+          <p className="text-[11.5px] leading-relaxed text-ink-3">
+            Raised milestones enter <strong>pending verification</strong>. The
+            release percentage is derived from the amount against the project
+            budget.
+          </p>
+        </form>
+      </Modal>
+
+      {/* ---------------- payment ledger ---------------- */}
+      <Modal
+        open={ledgerOpen}
+        onClose={() => setLedgerOpen(false)}
+        title="Payment Ledger"
+        description="Every recorded milestone movement on this project."
+        size="lg"
+      >
+        <QueryBoundary
+          isLoading={ledger.isLoading}
+          error={ledger.error}
+          data={ledger.data}
+          onRetry={ledger.refetch}
+          emptyTitle="No payment activity yet"
+          emptyBody="Verifying or releasing a milestone records an entry here."
+          skeleton={<RowSkeleton rows={5} />}
+        >
+          <ol className="space-y-3">
+            {(ledger.data ?? []).map((entry) => (
+              <li
+                key={entry.id}
+                className="flex gap-3 border-b border-line pb-3 last:border-b-0"
+              >
+                <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-success" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] leading-snug text-ink">{entry.summary}</p>
+                  <p className="mt-0.5 text-[11.5px] text-ink-3">
+                    {entry.actor} · {longDate(entry.at)}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </QueryBoundary>
       </Modal>
 
       {/* ---------------- row action sheet ---------------- */}
@@ -361,23 +548,36 @@ export default function Finance() {
         size="sm"
       >
         <div className="space-y-1">
-          {['Approve Payment', 'Request Re-verification', 'View Invoice', 'Download Receipt'].map(
-            (action) => (
-              <button
-                key={action}
-                type="button"
-                onClick={() => {
-                  setMenuFor(null)
-                  toast(`${action} — not wired up in this prototype.`, {
-                    tone: 'info',
-                  })
-                }}
-                className="focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] text-ink-2 transition-colors hover:bg-subtle hover:text-ink"
-              >
-                {action}
-              </button>
-            ),
-          )}
+          {/* The one legal next step, from where this milestone actually is.
+              Offering "Release Payment" on an unverified milestone would only
+              produce an error from the database, which enforces the order. */}
+          {menuFor && MILESTONE_ACTIONS[menuFor.statusKey] ? (
+            <button
+              type="button"
+              disabled={advancing}
+              onClick={() => advance(menuFor, MILESTONE_ACTIONS[menuFor.statusKey].next)}
+              className="focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] font-semibold text-brand-ink transition-colors hover:bg-brand-50 disabled:opacity-50"
+            >
+              {advancing ? 'Working…' : MILESTONE_ACTIONS[menuFor.statusKey].label}
+            </button>
+          ) : null}
+
+          {menuFor?.statusKey === 'pending_verification' ? (
+            <button
+              type="button"
+              disabled={advancing}
+              onClick={() => advance(menuFor, 'upcoming')}
+              className="focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] text-danger transition-colors hover:bg-danger-bg/50 disabled:opacity-50"
+            >
+              Send Back for Rework
+            </button>
+          ) : null}
+
+          {menuFor?.statusKey === 'paid' ? (
+            <p className="px-3 py-2.5 text-[13px] text-ink-2">
+              Paid in full. Transaction reference is on the ledger.
+            </p>
+          ) : null}
         </div>
       </Modal>
     </>

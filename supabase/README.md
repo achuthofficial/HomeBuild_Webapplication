@@ -48,10 +48,32 @@ The five entities from PRD section 8, plus what the interface needs:
 | `contractors` | goal 4 | Contractor Management |
 | `schedule_phases` | 5.4.2 | Gantt, list and board views |
 | `budget_entries`, `cost_categories` | — | Trend chart, category donut |
+| `invitations` | §4 personas | Team invites on Settings |
+| `activity_log` | audit fields | Audit log, payment ledger |
 
 Money is stored in **rupees**, not lakhs. The UI formats to ₹ / L / Cr at the
 edge, and keeping the base unit avoids rounding drift between screens that
 show the same figure at different magnitudes.
+
+## Workflow rules live in SQL, not the client
+
+Three functions enforce the parts that must not be bypassed by a client bug:
+
+- **`advance_milestone`** — the PRD 8.5 payment chain. A milestone cannot be
+  paid before the customer approves, nor approved before the PM verifies.
+  Timestamps and the payment reference are stamped server-side.
+- **`resolve_alert`** — the PRD 8.4 alert workflow, with its own audit entry.
+- **`apply_schedule_forecast`** — the rule-based part of PRD 5.4.3: cumulative
+  delay pushed into later phases, plus the documented monsoon buffer for
+  weeks 22–36. No model involved.
+
+Two triggers keep derived figures honest. Changing a phase's status or paying
+a milestone recalculates the project's `progress_pct` and `budget_consumed`,
+so the dashboard KPIs cannot drift away from the detail screens. Progress is
+weighted by phase cost, not a plain count — a long cheap phase should not
+count the same as the structure.
+
+Re-running `schema.sql` is how you upgrade: every statement is idempotent.
 
 ## Two things to know before this goes near real customers
 
