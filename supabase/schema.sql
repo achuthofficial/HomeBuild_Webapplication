@@ -14,6 +14,362 @@
 -- Run this in the Supabase SQL editor, then seed.sql.
 -- =============================================================================
 
+-- =============================================================================
+-- Pre-flight: key columns
+--
+-- This runs FIRST, before anything else can depend on it.
+--
+-- `create table if not exists` leaves an existing table exactly as it is, so a
+-- table carrying a different shape — a `project_id` primary key where this
+-- schema expects `id`, say — survives untouched, and then every foreign key
+-- below that points at it fails:
+--
+--   ERROR: 42703: column "id" referenced in foreign key constraint does not
+--   exist
+--
+-- A foreign key also needs its target to be UNIQUE, which an added column is
+-- not by default. So for each table this schema owns, this makes sure the key
+-- column exists, is populated, and is unique.
+--
+-- It never drops or renames anything. A table that already had `project_id` as
+-- its primary key keeps it and gains `id` alongside; the rows are preserved and
+-- given fresh identifiers, which is what makes them referenceable at all.
+-- =============================================================================
+do $$
+declare
+  r          record;
+  v_added    integer := 0;
+  v_uniqued  integer := 0;
+  v_exists   boolean;
+  v_haskey   boolean;
+begin
+  for r in
+    select * from (values
+      -- profiles is keyed on the Firebase UID; every other table on `id`.
+      ('profiles',               'firebase_uid', 'text'),
+      ('projects',               'id',           'uuid'),
+      ('project_members',        'id',           'uuid'),
+      ('floor_plans',            'id',           'uuid'),
+      ('site_updates',           'id',           'uuid'),
+      ('site_update_photos',     'id',           'uuid'),
+      ('ai_alerts',              'id',           'uuid'),
+      ('milestones',             'id',           'uuid'),
+      ('contractors',            'id',           'uuid'),
+      ('contractor_assignments', 'id',           'uuid'),
+      ('schedule_phases',        'id',           'uuid'),
+      ('budget_entries',         'id',           'uuid'),
+      ('cost_categories',        'id',           'uuid'),
+      ('expenses',               'id',           'uuid'),
+      ('invitations',            'id',           'uuid'),
+      ('activity_log',           'id',           'uuid')
+    ) as t(tbl, col, typ)
+  loop
+    select exists (
+      select 1 from information_schema.tables
+      where table_schema = 'public' and table_name = r.tbl
+        and table_type = 'BASE TABLE'
+    ) into v_exists;
+
+    /* Nothing to repair on a table this run is about to create properly. */
+    continue when not v_exists;
+
+    select exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = r.tbl
+        and column_name = r.col
+    ) into v_haskey;
+
+    if not v_haskey then
+      /* A uuid default fills every existing row with a distinct value, which
+         is what lets the unique constraint below succeed. `text` has no such
+         default — a Firebase UID cannot be invented — so those rows stay null,
+         and null is still distinct under a unique index. */
+      execute format(
+        'alter table public.%I add column %I %s%s',
+        r.tbl, r.col, r.typ,
+        case when r.typ = 'uuid' then ' default gen_random_uuid()' else '' end
+      );
+      v_added := v_added + 1;
+    end if;
+
+    /* A foreign key needs a unique target. Skip when one already covers this
+       column — as a primary key, a unique constraint, or a unique index. */
+    if not exists (
+      select 1
+      from pg_index i
+      join pg_class c on c.oid = i.indrelid
+      join pg_namespace n on n.oid = c.relnamespace
+      join pg_attribute a
+        on a.attrelid = c.oid and a.attnum = any (i.indkey)
+      where n.nspname = 'public' and c.relname = r.tbl
+        and i.indisunique and i.indnatts = 1
+        and a.attname = r.col
+    ) then
+      execute format(
+        'create unique index if not exists %I on public.%I(%I)',
+        r.tbl || '_' || r.col || '_key', r.tbl, r.col
+      );
+      v_uniqued := v_uniqued + 1;
+    end if;
+  end loop;
+
+  if v_added > 0 or v_uniqued > 0 then
+    raise notice
+      'key columns: added %, made % unique', v_added, v_uniqued;
+  end if;
+end $$;
+
+-- =============================================================================
+-- Pre-flight: name collisions
+--
+-- `create table if not exists` also does nothing when the name belongs to a
+-- VIEW. Everything after would then fail obscurely — `ALTER action ADD COLUMN
+-- cannot be performed on relation "expenses"` — so this says plainly what is
+-- in the way. It refuses rather than dropping: a view this schema did not
+-- create is not this script's to delete.
+-- =============================================================================
+do $$
+declare v_clash text;
+begin
+  select string_agg(c.relname || ' (' ||
+           case c.relkind when 'v' then 'view' when 'm' then 'materialized view'
+                          when 'f' then 'foreign table' else c.relkind::text end
+         || ')', ', ')
+  into v_clash
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public'
+    and c.relkind in ('v','m','f')
+    and c.relname in (
+      'profiles','projects','project_members','floor_plans','site_updates',
+      'site_update_photos','ai_alerts','milestones','contractors',
+      'contractor_assignments','schedule_phases','budget_entries',
+      'cost_categories','expenses','invitations','activity_log');
+
+  if v_clash is not null then
+    raise exception
+      'These names are needed as tables but already exist as something else: %. '
+      'Rename or drop them, then re-run this file.', v_clash;
+  end if;
+end $$;
+
+-- =============================================================================
+-- Pre-flight: column types
+--
+-- A column can carry the right NAME and the wrong TYPE — `budget_total text`
+-- where this schema expects bigint. The reconciliation below skips columns
+-- that already exist, so the mismatch survives and surfaces much later as
+-- `operator does not exist: text = bigint`, pointing at a statement that is
+-- not the problem.
+--
+-- Each mismatch is cast in place. The cast is all-or-nothing per column: if a
+-- single value will not convert, Postgres rejects the whole ALTER and this
+-- re-raises it naming the table, column and types, which is the information
+-- needed to fix it by hand. Nothing is dropped or emptied to make a cast fit.
+-- =============================================================================
+do $$
+declare
+  r        record;
+  v_actual text;
+  v_fixed  integer := 0;
+begin
+  for r in
+    select * from (values
+      ('profiles','firebase_uid','text'),
+      ('profiles','full_name','text'),
+      ('profiles','email','text'),
+      ('profiles','phone','text'),
+      ('profiles','job_title','text'),
+      ('profiles','role','text'),
+      ('profiles','avatar_url','text'),
+      ('profiles','created_at','timestamp with time zone'),
+      ('profiles','updated_at','timestamp with time zone'),
+      ('projects','id','uuid'),
+      ('projects','name','text'),
+      ('projects','client_name','text'),
+      ('projects','customer_uid','text'),
+      ('projects','manager_uid','text'),
+      ('projects','status','text'),
+      ('projects','city','text'),
+      ('projects','plot_address','text'),
+      ('projects','plot_lat','numeric'),
+      ('projects','plot_lng','numeric'),
+      ('projects','plot_length_ft','integer'),
+      ('projects','plot_width_ft','integer'),
+      ('projects','plot_facing','text'),
+      ('projects','total_floors','text'),
+      ('projects','bhk_per_floor','integer'),
+      ('projects','budget_total','bigint'),
+      ('projects','budget_consumed','bigint'),
+      ('projects','progress_pct','integer'),
+      ('projects','budget_status','text'),
+      ('projects','timeline_status','text'),
+      ('projects','start_date','date'),
+      ('projects','expected_completion','date'),
+      ('projects','actual_completion','date'),
+      ('projects','created_at','timestamp with time zone'),
+      ('projects','updated_at','timestamp with time zone'),
+      ('project_members','project_id','uuid'),
+      ('project_members','member_uid','text'),
+      ('project_members','role','text'),
+      ('floor_plans','id','uuid'),
+      ('floor_plans','project_id','uuid'),
+      ('floor_plans','variant','text'),
+      ('floor_plans','name','text'),
+      ('floor_plans','vastu_score','numeric'),
+      ('floor_plans','efficiency_score','numeric'),
+      ('floor_plans','total_sqft','integer'),
+      ('floor_plans','cost_per_sqft','integer'),
+      ('floor_plans','total_cost','bigint'),
+      ('floor_plans','vastu_notes','text'),
+      ('floor_plans','room_layout','jsonb'),
+      ('floor_plans','ai_metadata','jsonb'),
+      ('floor_plans','is_selected','boolean'),
+      ('floor_plans','created_at','timestamp with time zone'),
+      ('site_updates','id','uuid'),
+      ('site_updates','project_id','uuid'),
+      ('site_updates','supervisor_uid','text'),
+      ('site_updates','work_category','text'),
+      ('site_updates','location_on_site','text'),
+      ('site_updates','notes','text'),
+      ('site_updates','status','text'),
+      ('site_updates','milestone_id','uuid'),
+      ('site_updates','uploaded_at','timestamp with time zone'),
+      ('site_updates','created_at','timestamp with time zone'),
+      ('site_update_photos','id','uuid'),
+      ('site_update_photos','site_update_id','uuid'),
+      ('site_update_photos','storage_path','text'),
+      ('site_update_photos','caption','text'),
+      ('site_update_photos','uploaded_by','text'),
+      ('site_update_photos','created_at','timestamp with time zone'),
+      ('ai_alerts','id','uuid'),
+      ('ai_alerts','project_id','uuid'),
+      ('ai_alerts','source_update_id','uuid'),
+      ('ai_alerts','category','text'),
+      ('ai_alerts','severity','text'),
+      ('ai_alerts','confidence','numeric'),
+      ('ai_alerts','description','text'),
+      ('ai_alerts','location_text','text'),
+      ('ai_alerts','location_in_photo','jsonb'),
+      ('ai_alerts','status','text'),
+      ('ai_alerts','assigned_to','text'),
+      ('ai_alerts','detected_at','timestamp with time zone'),
+      ('ai_alerts','resolved_at','timestamp with time zone'),
+      ('ai_alerts','resolution_photo','text'),
+      ('ai_alerts','created_at','timestamp with time zone'),
+      ('milestones','id','uuid'),
+      ('milestones','project_id','uuid'),
+      ('milestones','sequence','integer'),
+      ('milestones','name','text'),
+      ('milestones','contractor_id','uuid'),
+      ('milestones','release_pct','numeric'),
+      ('milestones','release_amount','bigint'),
+      ('milestones','due_date','date'),
+      ('milestones','status','text'),
+      ('milestones','pm_verified_at','timestamp with time zone'),
+      ('milestones','customer_approved_at','timestamp with time zone'),
+      ('milestones','payment_txn_id','text'),
+      ('milestones','created_at','timestamp with time zone'),
+      ('milestones','updated_at','timestamp with time zone'),
+      ('contractors','id','uuid'),
+      ('contractors','code','text'),
+      ('contractors','name','text'),
+      ('contractors','initials','text'),
+      ('contractors','trade','text'),
+      ('contractors','rating','numeric'),
+      ('contractors','score','integer'),
+      ('contractors','kind','text'),
+      ('contractors','compliance_ok','boolean'),
+      ('contractors','created_at','timestamp with time zone'),
+      ('contractor_assignments','contractor_id','uuid'),
+      ('contractor_assignments','project_id','uuid'),
+      ('schedule_phases','id','uuid'),
+      ('schedule_phases','project_id','uuid'),
+      ('schedule_phases','sequence','integer'),
+      ('schedule_phases','name','text'),
+      ('schedule_phases','phase_group','text'),
+      ('schedule_phases','baseline_start_week','numeric'),
+      ('schedule_phases','baseline_end_week','numeric'),
+      ('schedule_phases','actual_start_week','numeric'),
+      ('schedule_phases','actual_end_week','numeric'),
+      ('schedule_phases','forecast_start_week','numeric'),
+      ('schedule_phases','forecast_end_week','numeric'),
+      ('schedule_phases','cost','bigint'),
+      ('schedule_phases','status','text'),
+      ('schedule_phases','delay_days','integer'),
+      ('schedule_phases','created_at','timestamp with time zone'),
+      ('budget_entries','id','uuid'),
+      ('budget_entries','project_id','uuid'),
+      ('budget_entries','period','date'),
+      ('budget_entries','amount','bigint'),
+      ('budget_entries','created_at','timestamp with time zone'),
+      ('cost_categories','id','uuid'),
+      ('cost_categories','project_id','uuid'),
+      ('cost_categories','label','text'),
+      ('cost_categories','pct','numeric'),
+      ('cost_categories','tone','text'),
+      ('cost_categories','sequence','integer'),
+      ('cost_categories','created_at','timestamp with time zone'),
+      ('expenses','id','uuid'),
+      ('expenses','project_id','uuid'),
+      ('expenses','category_id','uuid'),
+      ('expenses','milestone_id','uuid'),
+      ('expenses','amount','bigint'),
+      ('expenses','incurred_on','date'),
+      ('expenses','vendor','text'),
+      ('expenses','note','text'),
+      ('expenses','created_by','text'),
+      ('expenses','created_at','timestamp with time zone'),
+      ('invitations','id','uuid'),
+      ('invitations','email','text'),
+      ('invitations','role','text'),
+      ('invitations','project_id','uuid'),
+      ('invitations','invited_by','text'),
+      ('invitations','status','text'),
+      ('invitations','token','uuid'),
+      ('invitations','expires_at','timestamp with time zone'),
+      ('invitations','accepted_at','timestamp with time zone'),
+      ('invitations','created_at','timestamp with time zone'),
+      ('activity_log','id','uuid'),
+      ('activity_log','project_id','uuid'),
+      ('activity_log','actor_uid','text'),
+      ('activity_log','entity','text'),
+      ('activity_log','entity_id','uuid'),
+      ('activity_log','action','text'),
+      ('activity_log','summary','text'),
+      ('activity_log','detail','jsonb'),
+      ('activity_log','created_at','timestamp with time zone')
+    ) as t(tbl, col, want)
+  loop
+    select data_type into v_actual
+    from information_schema.columns
+    where table_schema = 'public' and table_name = r.tbl and column_name = r.col;
+
+    continue when v_actual is null or v_actual = r.want;
+    /* Arrays and json are not safely coercible from an arbitrary shape; the
+       reconciliation leaves them alone and so does this. */
+    continue when r.want in ('ARRAY', 'jsonb') or v_actual in ('ARRAY', 'jsonb');
+
+    begin
+      execute format(
+        'alter table public.%I alter column %I type %s using nullif(trim(%I::text), '''')::%s',
+        r.tbl, r.col, r.want, r.col, r.want
+      );
+      v_fixed := v_fixed + 1;
+      raise notice 'converted %.% from % to %', r.tbl, r.col, v_actual, r.want;
+    exception when others then
+      raise exception
+        'Column %.% is % but this schema needs %, and the existing values will '
+        'not convert (%). Fix or clear that column, then re-run this file.',
+        r.tbl, r.col, v_actual, r.want, sqlerrm;
+    end;
+  end loop;
+
+  if v_fixed > 0 then
+    raise notice 'column types: converted %', v_fixed;
+  end if;
+end $$;
+
 -- Helper: the calling user's Firebase UID, or null when unauthenticated.
 create or replace function public.firebase_uid()
 returns text
