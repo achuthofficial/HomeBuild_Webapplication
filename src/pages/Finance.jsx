@@ -281,7 +281,13 @@ export default function Finance() {
     <>
       <PageHeader
         title="Financial Overview"
-        subtitle="Real-time budget analysis and tracking for Project Alpha."
+        /* Named the loaded project, not "Project Alpha" — which was a
+           different project's name on every screen it appeared. */
+        subtitle={
+          summary.data?.projectName
+            ? `Budget, escrow and spend for ${summary.data.projectName}.`
+            : 'Budget, escrow and spend tracking.'
+        }
         actions={
           <>
             <Button

@@ -20,10 +20,14 @@ const BADGES = {
   on_hold: { label: 'ON HOLD', tone: 'neutral' },
 }
 
+/* PRD 5.4.5 names the three overlays: baseline blue, ACTUAL GREEN, forecast
+   violet. So the actual bar is green wherever work is real, and the exception
+   is a phase in trouble — a delay is worth more than colour consistency. The
+   status chip beside each row still carries the precise state. */
 const BAR_TONES = {
   done: 'success',
-  in_progress: 'violet',
-  critical: 'violet',
+  in_progress: 'success',
+  critical: 'danger',
   delayed: 'danger',
   queued: 'neutral',
   on_hold: 'neutral',
@@ -31,13 +35,21 @@ const BAR_TONES = {
 
 export async function getSchedule(projectId) {
   requireConfigured()
-  const rows = unwrap(
-    await supabase
+
+  const [rows, project] = await Promise.all([
+    supabase
       .from('schedule_phases')
       .select('*')
       .eq('project_id', projectId)
-      .order('sequence', { ascending: true }),
-  )
+      .order('sequence', { ascending: true })
+      .then(unwrap),
+    supabase
+      .from('projects')
+      .select('start_date')
+      .eq('id', projectId)
+      .single()
+      .then(unwrap),
+  ])
 
   /* Group in insertion order so the Gantt's row order follows `sequence`. */
   const groups = new Map()
@@ -102,39 +114,71 @@ export async function getSchedule(projectId) {
 
   return {
     groups: list,
-    months: buildMonths(),
+    months: buildMonths(project?.start_date),
+    today: todayMarker(project?.start_date),
     totalDelayDays: rows.reduce((sum, r) => sum + (r.delay_days ?? 0), 0),
     phaseCount: rows.length,
   }
 }
 
 /**
- * Column headers for the visible window. Derived from today rather than
- * hard-coded, so the chart does not silently go stale.
+ * Where "today" falls on the chart — PRD 5.4.5, "today marker updates daily".
+ *
+ * Phase bars are positioned in weeks from the PROJECT'S START, so the marker
+ * has to be measured the same way. It used to be a constant in a data file
+ * (`offset: 2.45, label: 'TODAY: OCT 18'`), which meant the red line never
+ * moved and, by the time you read this, pointed at a date in the past while
+ * the column headers showed a different month entirely.
+ *
+ * Returns null when the project has no start date, so the chart draws no
+ * marker rather than one placed on a guess.
  */
-function buildMonths() {
-  const out = []
-  const now = new Date()
-  const startWeek = isoWeek(now)
+function todayMarker(startDate) {
+  if (!startDate) return null
 
-  for (let m = 0; m < 3; m++) {
-    const monthDate = new Date(now.getFullYear(), now.getMonth() + m, 1)
-    out.push({
-      label: monthDate
-        .toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-        .toUpperCase(),
-      weeks: Array.from({ length: 4 }, (_, i) => `W${startWeek + m * 4 + i}`),
-    })
+  const start = new Date(`${startDate}T00:00:00`)
+  const now = new Date()
+  const weeks = (now - start) / (7 * 86400000)
+
+  /* Off either end of the window the line would sit on the border and read as
+     a chart edge; better to leave it off than to pin it misleadingly. */
+  if (weeks < 0 || weeks > TOTAL_WEEKS) return null
+
+  return {
+    offset: Math.round(weeks * 100) / 100,
+    label: `TODAY: ${now
+      .toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      .toUpperCase()}`,
   }
-  return out
 }
 
-function isoWeek(date) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
-  const dayNum = d.getUTCDay() || 7
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
-  return Math.ceil(((d - yearStart) / 86400000 + 1) / 7)
+/**
+ * Column headers for the twelve-week window.
+ *
+ * Derived from the PROJECT'S start date, because that is the origin the phase
+ * bars are measured from. They used to be calendar ISO weeks counted from
+ * today, which put the bars and the headers on two different axes: a bar at
+ * "week 2" was two weeks into the project, while the column above it read as
+ * two weeks from now.
+ *
+ * Months are grouped by where each week actually falls in the calendar, so a
+ * window can show three or four month headings of uneven width — which is
+ * what a real twelve weeks looks like.
+ */
+function buildMonths(startDate) {
+  const origin = startDate ? new Date(`${startDate}T00:00:00`) : new Date()
+  const out = []
+
+  for (let w = 0; w < TOTAL_WEEKS; w++) {
+    const weekStart = new Date(origin.getTime() + w * 7 * 86400000)
+    const label = weekStart
+      .toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      .toUpperCase()
+
+    if (out.at(-1)?.label !== label) out.push({ label, weeks: [] })
+    out.at(-1).weeks.push(`W${w + 1}`)
+  }
+  return out
 }
 
 /**
@@ -186,6 +230,99 @@ export async function setPhaseStatus(
       .select('id, name, status, delay_days, project_id')
       .single(),
   )
+}
+
+/**
+ * The three cards beside the Gantt.
+ *
+ * All three used to be constants in src/data/schedule.js — a fixed 92% health,
+ * a fixed "24 Carpenters / 12 MEP Staff / 8 Excavation", and a fixed pulse
+ * rail naming people who do not exist. They looked like live figures and
+ * belonged to no project.
+ */
+export async function getScheduleSidebar(projectId) {
+  requireConfigured()
+
+  const [project, phases, milestones, updates] = await Promise.all([
+    supabase
+      .from('projects')
+      .select('progress_pct, expected_completion')
+      .eq('id', projectId)
+      .single()
+      .then(unwrap),
+    supabase
+      .from('schedule_phases')
+      .select('name, status, delay_days, sequence')
+      .eq('project_id', projectId)
+      .order('sequence', { ascending: true })
+      .then(unwrap),
+    supabase
+      .from('milestones')
+      .select('name, due_date, status, sequence')
+      .eq('project_id', projectId)
+      .neq('status', 'paid')
+      .order('sequence', { ascending: true })
+      .limit(1)
+      .then(unwrap),
+    /* Headcount and trades come from what supervisors actually posted
+       (PRD 5.2.5's "workers present"), not from a staffing table this
+       product does not have. */
+    supabase
+      .from('site_updates')
+      .select('work_category, workers_present, uploaded_at')
+      .eq('project_id', projectId)
+      .order('uploaded_at', { ascending: false })
+      .limit(30)
+      .then(unwrap),
+  ])
+
+  const next = milestones[0] ?? null
+  const daysRemaining = next?.due_date
+    ? Math.round(
+        (new Date(`${next.due_date}T00:00:00`) - new Date()) / 86400000,
+      )
+    : null
+
+  /* "On track" is a claim, so it has to be earned: no phase currently
+     overrunning, and the next milestone not already past its date. */
+  const slipping = phases.some((p) => (p.delay_days ?? 0) > 0)
+  const overdue = daysRemaining !== null && daysRemaining < 0
+
+  const done = phases.filter((p) => p.status === 'done').length
+
+  /* One row per trade, with the most recent headcount reported for it —
+     summing every update would count the same crew once per day. */
+  const byCategory = new Map()
+  for (const u of updates) {
+    if (!u.workers_present) continue
+    if (!byCategory.has(u.work_category)) {
+      byCategory.set(u.work_category, u.workers_present)
+    }
+  }
+
+  return {
+    health: {
+      value: Number(project?.progress_pct) || 0,
+      caption: slipping
+        ? 'Behind baseline on at least one phase'
+        : 'Overall progress on track',
+      onTrack: !slipping,
+      nextMilestone: next?.name ?? null,
+      daysRemaining,
+      overdue,
+      phasesDone: done,
+      phaseCount: phases.length,
+    },
+    workforce: {
+      trades: [...byCategory.entries()]
+        .slice(0, 3)
+        .map(([label, value]) => ({ label, value })),
+      total: [...byCategory.values()].reduce((a, b) => a + b, 0),
+      /* Null when no supervisor has recorded a headcount, so the card can say
+         so rather than showing three zeroes. */
+      reported: byCategory.size > 0,
+    },
+  }
 }
 
 /** The root causes PRD 5.4.4 asks the system to attribute a delay to. */

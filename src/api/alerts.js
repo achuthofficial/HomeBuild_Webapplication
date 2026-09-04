@@ -123,6 +123,60 @@ export async function listAlerts({ severity, status, page = 1 } = {}) {
   }
 }
 
+/**
+ * The open findings shown beside the site feed.
+ *
+ * The rail used to render two fixed cards ("MEP Clash Detected", "Schedule
+ * Risk") with buttons that admitted they were not wired up. These are the
+ * project's real open alerts, worst first.
+ */
+export async function listOpenFindings(projectId, limit = 3) {
+  requireConfigured()
+
+  let query = supabase
+    .from('ai_alerts')
+    .select('id, category, severity, description, location_text, detected_at')
+    .in('status', OPEN)
+  if (projectId) query = query.eq('project_id', projectId)
+
+  const rows = unwrap(
+    await query.order('detected_at', { ascending: false }).limit(40),
+  )
+
+  /* Severity first, then recency — a Critical from yesterday outranks a Low
+     from this morning. */
+  const rank = { Critical: 0, High: 1, Medium: 2, Low: 3 }
+  return rows
+    .sort(
+      (a, b) =>
+        (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9) ||
+        new Date(b.detected_at) - new Date(a.detected_at),
+    )
+    .slice(0, limit)
+    .map((r) => ({
+      id: r.id,
+      title: r.category,
+      severity: r.severity,
+      body: r.description ?? 'No description recorded.',
+      location: r.location_text,
+    }))
+}
+
+/**
+ * How many alerts still need attention — the number behind the topbar bell.
+ *
+ * The bell used to raise a toast saying "You have 3 unread notifications" and
+ * showed a red dot permanently, neither of which was connected to anything.
+ */
+export async function getOpenAlertCount() {
+  requireConfigured()
+  const { count } = await supabase
+    .from('ai_alerts')
+    .select('id', { count: 'exact', head: true })
+    .in('status', OPEN)
+  return count ?? 0
+}
+
 /** The four KPI cards above the table. */
 export async function getAlertKpis() {
   requireConfigured()

@@ -18,6 +18,8 @@ import { searchPlaceholders } from '@/data/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { useTheme } from '@/context/ThemeContext'
+import { useQuery } from '@/hooks/useQuery'
+import { getOpenAlertCount } from '@/api/alerts'
 
 export default function Topbar({ onMenuClick, onCreateProject }) {
   const { pathname } = useLocation()
@@ -25,6 +27,12 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
   const { user, signOut } = useAuth()
   const { toast } = useToast()
   const { resolvedTheme, toggleTheme } = useTheme()
+
+  /* The bell's badge. Refetched on navigation rather than polled: acting on
+     an alert always ends in a route change, and a timer here would fire on
+     every screen forever for a number that rarely moves. */
+  const alertCount = useQuery(() => getOpenAlertCount(), [pathname])
+  const openAlerts = alertCount.data ?? 0
 
   const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -94,12 +102,23 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
 
         <button
           type="button"
-          onClick={() => toast('You have 3 unread notifications.', { tone: 'info' })}
-          aria-label="Notifications"
+          onClick={() => {
+            if (openAlerts > 0) navigate('/analytics')
+            else toast('No open alerts.', { tone: 'info' })
+          }}
+          aria-label={
+            openAlerts > 0
+              ? `${openAlerts} open alert${openAlerts === 1 ? '' : 's'}`
+              : 'Notifications — none open'
+          }
           className="focus-ring relative rounded-[8px] p-2 text-ink-2 transition-colors hover:bg-subtle"
         >
           <Bell className="size-[18px]" strokeWidth={1.75} />
-          <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-danger" />
+          {/* The dot used to be painted unconditionally, so it claimed unread
+              news on a completely quiet account. */}
+          {openAlerts > 0 ? (
+            <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-danger" />
+          ) : null}
         </button>
 
         <button

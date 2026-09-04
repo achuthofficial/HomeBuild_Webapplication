@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, Plus, Sparkles, ArrowRight } from 'lucide-react'
+import { Camera, Plus, TriangleAlert, ArrowRight } from 'lucide-react'
+
+import { Link } from 'react-router-dom'
 
 import PageHeader from '@/components/layout/PageHeader'
 import Card from '@/components/ui/Card'
@@ -12,7 +14,8 @@ import Modal from '@/components/ui/Modal'
 import { cn } from '@/lib/cn'
 import { longDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
-import { aiInsights, activityBreakdown } from '@/data/siteFeed'
+import { downloadCsv } from '@/lib/csv'
+
 import QueryBoundary, { RowSkeleton } from '@/components/ui/QueryBoundary'
 import { useQuery } from '@/hooks/useQuery'
 import {
@@ -23,8 +26,10 @@ import {
   listProjectOptions,
   listMilestoneOptions,
   WORK_CATEGORIES,
+  getActivityBreakdown,
 } from '@/api/siteFeed'
 import { FormMessage } from '@/components/auth/AuthForm'
+import { listOpenFindings } from '@/api/alerts'
 import { onImageError } from '@/lib/imageFallback'
 import { useAuth } from '@/context/AuthContext'
 import { uploadSitePhoto } from '@/lib/storage'
@@ -59,6 +64,8 @@ export default function Construction() {
     notes: '',
     status: 'in_progress',
     milestoneId: '',
+    workersPresent: '',
+    materialsUsed: '',
   })
   const fileInput = useRef(null)
   /* Which entry the hidden file input is currently acting for. */
@@ -68,6 +75,10 @@ export default function Construction() {
      site_update_photos, signed in one batch, rather than being inferred from
      storage prefixes. */
   const feed = useQuery(() => listFeedEntries({ category: filter }), [filter])
+
+  /* The rail beside the feed. Both used to be constants in a data file. */
+  const findings = useQuery(() => listOpenFindings(null, 3), [])
+  const breakdown = useQuery(() => getActivityBreakdown(null), [filter])
   const categories = useQuery(() => listFeedCategories(), [])
   const projectOptions = useQuery(() => listProjectOptions(), [], {
     enabled: updateOpen,
@@ -101,10 +112,19 @@ export default function Construction() {
         notes: draft.notes,
         status: draft.status,
         milestoneId: draft.milestoneId || null,
+        workersPresent: draft.workersPresent,
+        materialsUsed: draft.materialsUsed,
       })
       setPosting(false)
       setUpdateOpen(false)
-      setDraft((d) => ({ ...d, location: '', notes: '', milestoneId: '' }))
+      setDraft((d) => ({
+        ...d,
+        location: '',
+        notes: '',
+        milestoneId: '',
+        workersPresent: '',
+        materialsUsed: '',
+      }))
       toast('Site update posted to the feed.')
       feed.refetch()
       categories.refetch()
@@ -171,7 +191,10 @@ export default function Construction() {
     <>
       <PageHeader
         title="Daily Site Feed"
-        subtitle="Real-time construction logs for Phase 2: Structural Integrity"
+        /* The feed spans every project the user can reach, so it cannot name
+           one phase. It used to claim "Phase 2: Structural Integrity"
+           regardless of what was on screen. */
+        subtitle="Daily progress updates from site supervisors, newest first."
         actions={
           <>
             <FilterSelect
@@ -262,6 +285,21 @@ export default function Construction() {
                       </span>
                       {entry.note}
                     </p>
+
+                    {/* Only rendered when recorded — an empty "Workers: —" row
+                        on every entry would be noise. */}
+                    {entry.workersPresent || entry.materialsUsed ? (
+                      <p className="mt-2 text-[11.5px] text-ink-3">
+                        {entry.workersPresent ? (
+                          <span className="tnum">
+                            {entry.workersPresent} worker
+                            {entry.workersPresent === 1 ? '' : 's'} on site
+                          </span>
+                        ) : null}
+                        {entry.workersPresent && entry.materialsUsed ? ' · ' : ''}
+                        {entry.materialsUsed}
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
@@ -310,56 +348,80 @@ export default function Construction() {
         <aside className="space-y-5 lg:sticky lg:top-[88px] lg:self-start">
           <Card className="p-5">
             <div className="flex items-center gap-2">
-              <Sparkles className="size-4 text-brand-ink" strokeWidth={2} />
-              <h2 className="text-[15px] font-semibold text-ink">AI Insights</h2>
+              <TriangleAlert className="size-4 text-brand-ink" strokeWidth={2} />
+              <h2 className="text-[15px] font-semibold text-ink">Open Findings</h2>
             </div>
 
-            <p className="eyebrow mt-4">Detected Potential Issues</p>
+            {/* This rail used to be headed "AI Insights" and render two fixed
+                cards about an MEP clash and forecast rain, with buttons that
+                admitted they were not wired up. These are the project's real
+                open alerts, worst severity first. The CV pipeline that is
+                meant to raise them is out of scope, so today they come from
+                the seed or from a PM logging one by hand. */}
+            <p className="eyebrow mt-4">Quality issues awaiting action</p>
 
-            <ul className="mt-3 space-y-3">
-              {aiInsights.map((insight) => {
-                const Icon = insight.icon
-                return (
+            {findings.isLoading ? (
+              <div className="mt-3">
+                <RowSkeleton rows={2} />
+              </div>
+            ) : (findings.data?.length ?? 0) === 0 ? (
+              <p className="mt-3 text-[12px] leading-relaxed text-ink-2">
+                Nothing open on this project.
+              </p>
+            ) : (
+              <ul className="mt-3 space-y-3">
+                {findings.data.map((finding) => (
                   <li
-                    key={insight.id}
+                    key={finding.id}
                     className="rounded-[10px] border border-line bg-canvas p-3.5"
                   >
-                    <div className="flex items-start gap-2.5">
-                      <Icon
-                        className="mt-px size-4 shrink-0 text-ink-2"
-                        strokeWidth={1.75}
-                      />
-                      <div className="min-w-0">
-                        <p className="text-[12.5px] font-semibold text-ink">
-                          {insight.title}
-                        </p>
-                        <p className="mt-1 text-[11.5px] leading-relaxed text-ink-2">
-                          {insight.body}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            toast(
-                              `“${insight.action}” is not wired up in this prototype.`,
-                              { tone: 'info' },
-                            )
-                          }
-                          className="focus-ring mt-2 rounded text-[11.5px] font-semibold text-brand-ink hover:underline"
-                        >
-                          {insight.action}
-                        </button>
-                      </div>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-[12.5px] font-semibold text-ink">
+                        {finding.title}
+                      </p>
+                      <Chip
+                        tone={
+                          finding.severity === 'Critical' ||
+                          finding.severity === 'High'
+                            ? 'danger'
+                            : finding.severity === 'Medium'
+                              ? 'warning'
+                              : 'neutral'
+                        }
+                        uppercase={false}
+                      >
+                        {finding.severity}
+                      </Chip>
                     </div>
+                    <p className="mt-1 text-[11.5px] leading-relaxed text-ink-2">
+                      {finding.body}
+                    </p>
+                    {finding.location ? (
+                      <p className="mt-1 text-[11px] text-ink-3">
+                        {finding.location}
+                      </p>
+                    ) : null}
+                    <Link
+                      to="/analytics"
+                      className="focus-ring mt-2 inline-block rounded text-[11.5px] font-semibold text-brand-ink hover:underline"
+                    >
+                      Triage in Alerts
+                    </Link>
                   </li>
-                )
-              })}
-            </ul>
+                ))}
+              </ul>
+            )}
 
             <div className="my-5 h-px bg-line" />
 
             <p className="eyebrow">Activity Breakdown</p>
+            {(breakdown.data?.length ?? 0) === 0 ? (
+              <p className="mt-3 text-[12px] text-ink-2">
+                No site updates recorded yet.
+              </p>
+            ) : null}
             <ul className="mt-3 space-y-2.5">
-              {activityBreakdown.map((item) => (
+              {(breakdown.data ?? []).map((item) => (
                 <li key={item.label} className="flex items-center gap-2 text-[12px]">
                   <span
                     className={cn(
@@ -375,13 +437,35 @@ export default function Construction() {
               ))}
             </ul>
 
+            {/* Exports the feed as it is filtered on screen. It used to say
+                "Report queued. It will appear in Analytics." — nothing was
+                queued and nothing appeared. */}
             <Button
               variant="outline"
               iconRight={ArrowRight}
               className="mt-5 w-full"
-              onClick={() => toast('Report queued. It will appear in Analytics.')}
+              disabled={entries.length === 0}
+              onClick={() => {
+                const count = downloadCsv(
+                  'homebuild-site-feed',
+                  [
+                    { key: 'date', label: 'Date' },
+                    { key: 'category', label: 'Work Category' },
+                    { key: 'title', label: 'Location' },
+                    { key: 'supervisor', label: 'Supervisor' },
+                    { key: 'note', label: 'Notes' },
+                    { key: 'photoCount', label: 'Photos' },
+                  ],
+                  entries.map((e) => ({
+                    ...e,
+                    supervisor: e.supervisor ?? 'Unknown',
+                    photoCount: e.photos.length,
+                  })),
+                )
+                toast(`Exported ${count} update${count === 1 ? '' : 's'} as CSV.`)
+              }}
             >
-              Generate Report
+              Export Site Log
             </Button>
           </Card>
         </aside>
@@ -392,7 +476,7 @@ export default function Construction() {
         open={updateOpen}
         onClose={() => setUpdateOpen(false)}
         title="New Site Update"
-        description="Log progress against Phase 2: Structural Integrity."
+        description="Record a day's work on site, with photos and metadata."
         footer={
           <>
             <Button variant="outline" onClick={() => setUpdateOpen(false)}>
@@ -490,6 +574,44 @@ export default function Construction() {
               disabled={posting}
               className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4"
             />
+          </div>
+
+          {/* The rest of PRD 5.2.5's optional metadata. Optional in the
+              document and optional here — a supervisor with 2 minutes to post
+              should not be blocked on a headcount. */}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="su-workers" className="eyebrow mb-1.5 block">
+                Workers Present
+              </label>
+              <input
+                id="su-workers"
+                type="number"
+                min="0"
+                value={draft.workersPresent}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, workersPresent: e.target.value }))
+                }
+                placeholder="12"
+                disabled={posting}
+                className="focus-ring tnum h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4"
+              />
+            </div>
+            <div>
+              <label htmlFor="su-materials" className="eyebrow mb-1.5 block">
+                Materials Used
+              </label>
+              <input
+                id="su-materials"
+                value={draft.materialsUsed}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, materialsUsed: e.target.value }))
+                }
+                placeholder="e.g. 40 bags OPC, 2 t steel"
+                disabled={posting}
+                className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4"
+              />
+            </div>
           </div>
 
           <div>

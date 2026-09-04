@@ -25,7 +25,7 @@ import { useToast } from '@/context/ToastContext'
 import EditProfileModal from '@/components/shared/EditProfileModal'
 import QueryBoundary, { RowSkeleton } from '@/components/ui/QueryBoundary'
 import { useQuery } from '@/hooks/useQuery'
-import { getProfile, listTeamMembers } from '@/api/profiles'
+import { getProfile, listTeamMembers, getProfileStats } from '@/api/profiles'
 import { listInvitations, createInvitation, revokeInvitation } from '@/api/invitations'
 import { listActivity } from '@/api/activity'
 import { longDate } from '@/lib/format'
@@ -71,6 +71,12 @@ export default function SettingsPage() {
      them — so the profile card reads from both sources. */
   const profileQuery = useQuery(
     () => getProfile(authUser?.uid),
+    [authUser?.uid],
+    { enabled: Boolean(authUser?.uid) },
+  )
+
+  const stats = useQuery(
+    () => getProfileStats(authUser?.uid),
     [authUser?.uid],
     { enabled: Boolean(authUser?.uid) },
   )
@@ -239,17 +245,19 @@ export default function SettingsPage() {
           </Button>
         </Card>
 
+        {/* Counted from the database. These were fixture numbers (12 and 04)
+            shown under the signed-in user's own name. */}
         <div className="grid grid-cols-2 gap-4">
           <Card className="p-4">
             <p className="text-[11px] text-ink-3">Active Projects</p>
             <p className="tnum mt-2 text-[24px] font-bold leading-none text-brand-ink">
-              {user.activeProjects}
+              {stats.isLoading ? '—' : (stats.data?.activeProjects ?? 0)}
             </p>
           </Card>
           <Card className="p-4">
             <p className="text-[11px] text-ink-3">Teams Led</p>
             <p className="tnum mt-2 text-[24px] font-bold leading-none text-success">
-              {user.teamsLed}
+              {stats.isLoading ? '—' : (stats.data?.teamsLed ?? 0)}
             </p>
           </Card>
         </div>

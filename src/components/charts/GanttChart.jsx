@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ChevronRight, ZoomIn, ZoomOut } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import Chip from '@/components/ui/Chip'
-import { ganttLegend, todayMarker } from '@/data/schedule'
+import { ganttLegend } from '@/data/schedule'
 import { TOTAL_WEEKS } from '@/api/schedule'
 
 const barTones = {
@@ -12,11 +12,13 @@ const barTones = {
   neutral: 'bg-line-strong',
 }
 
+/* PRD 5.4.5 names the three overlays by colour: baseline blue, actual green,
+   forecast violet. */
 const legendSwatch = {
   success: 'bg-success',
-  violet: 'bg-violet-bar',
-  baseline: 'bg-ink-2',
-  forecast: 'border border-dashed border-ink-4 bg-transparent',
+  danger: 'bg-danger-bar',
+  baseline: 'bg-brand-400',
+  forecast: 'border border-dashed border-violet bg-transparent',
 }
 
 /** Convert a week offset into a percentage of the 12-column track. */
@@ -35,7 +37,7 @@ function Bar({ bar, forecast, flag }) {
 
       {forecast ? (
         <div
-          className="absolute top-1/2 h-[11px] -translate-y-1/2 rounded-[3px] border border-dashed border-ink-4"
+          className="absolute top-1/2 h-[11px] -translate-y-1/2 rounded-[3px] border border-dashed border-violet"
           style={{
             left: toPct(forecast.start),
             width: toPct(forecast.end - forecast.start),
@@ -55,7 +57,7 @@ function Bar({ bar, forecast, flag }) {
   )
 }
 
-export default function GanttChart({ groups = [], months = [], onTaskClick }) {
+export default function GanttChart({ groups = [], months = [], today = null, onTaskClick }) {
   /* Seeded from the data, and re-seeded when the group set changes — a lazy
      initialiser alone would keep the first project's open/closed state after
      navigating to another. */
@@ -109,19 +111,25 @@ export default function GanttChart({ groups = [], months = [], onTaskClick }) {
 
           {/* ---------- rows --------------------------------------------- */}
           <div className="relative">
-            {/* today marker spans every row */}
-            <div
-              className="pointer-events-none absolute bottom-0 top-0 z-20 w-px bg-ink/70"
-              style={{
-                left: `calc(230px + (100% - 230px) * ${
-                  todayMarker.offset / TOTAL_WEEKS
-                })`,
-              }}
-            >
-              <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[4px] bg-ink px-1.5 py-[3px] text-[9px] font-bold uppercase tracking-[0.05em] text-canvas">
-                {todayMarker.label}
-              </span>
-            </div>
+            {/* Today marker, spanning every row. PRD 5.4.5 asks for a red
+                vertical line that updates daily; it is computed from the
+                project's start date. Null when the project has no start date
+                or today falls outside the window — better no line than one
+                drawn on a guess. */}
+            {today ? (
+              <div
+                className="pointer-events-none absolute bottom-0 top-0 z-20 w-px bg-danger"
+                style={{
+                  left: `calc(230px + (100% - 230px) * ${
+                    today.offset / TOTAL_WEEKS
+                  })`,
+                }}
+              >
+                <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[4px] bg-danger px-1.5 py-[3px] text-[9px] font-bold uppercase tracking-[0.05em] text-white">
+                  {today.label}
+                </span>
+              </div>
+            ) : null}
 
             {groups.map((group) => (
               <div key={group.id}>
@@ -148,7 +156,7 @@ export default function GanttChart({ groups = [], months = [], onTaskClick }) {
                   <div className="relative min-h-[44px] flex-1">
                     <GridLines />
                     <div
-                      className="absolute top-1/2 h-[7px] -translate-y-1/2 rounded-[2px] bg-ink-2"
+                      className="absolute top-1/2 h-[7px] -translate-y-1/2 rounded-[2px] bg-brand-400"
                       style={{
                         left: toPct(group.baseline.start),
                         width: toPct(group.baseline.end - group.baseline.start),

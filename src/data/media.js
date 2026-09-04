@@ -31,13 +31,6 @@ export const media = {
 }
 
 /**
- * The avatar ids vendored by scripts/fetch-images.mjs. Kept in step with the
- * AVATAR_IDS manifest in that script — asking for an id outside this set
- * would resolve to a file that was never downloaded.
- */
-export const AVATAR_IDS = [12, 13, 33, 45, 52, 60]
-
-/**
  * Deterministic avatar for a given person id — keeps demo faces stable.
  *
  * `size` is accepted for call-site compatibility but ignored: one 240px file

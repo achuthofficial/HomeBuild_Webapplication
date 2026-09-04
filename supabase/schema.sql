@@ -165,6 +165,13 @@ create table if not exists public.site_updates (
   created_at       timestamptz not null default now()
 );
 
+-- PRD 5.2.5 optional metadata. Workers present and materials used were the
+-- two fields from that list with nowhere to go, so the upload form could not
+-- ask for them.
+alter table public.site_updates
+  add column if not exists workers_present integer,
+  add column if not exists materials_used  text;
+
 create index if not exists site_updates_project_idx on public.site_updates(project_id);
 create index if not exists site_updates_uploaded_idx on public.site_updates(uploaded_at desc);
 

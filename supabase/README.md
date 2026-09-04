@@ -232,6 +232,30 @@ stacks and assignments point at something. Real rows are created on first
 sign-in, keyed on the actual Firebase UID, so they can never collide. Delete
 the seeded ones once you have real users.
 
+## No screen reads fixture data any more
+
+`src/data/` used to hold a mock record for every screen. Those files are gone
+— the directory now contains only UI configuration (navigation, the Gantt
+legend, the auth illustration). What that removed, specifically:
+
+- a fixed `92%` Schedule Health with a milestone called "Framing Completion",
+- a Workforce card reading "24 Carpenters / 12 MEP Staff / 8 Excavation" and
+  an "Optimization Active" panel that was neither,
+- a Timeline Pulse rail naming three people who are not in the database,
+- an "AI Insights" rail with two invented findings whose buttons admitted they
+  were not wired up,
+- an Activity Breakdown of four fixed percentages, identical on every project,
+- `activeProjects: 12` and `teamsLed: '04'` shown under the signed-in user's
+  own name and photo on Settings,
+- a "TODAY" line on the Gantt frozen at `OCT 18`,
+- page headers naming "Project Alpha", "Sky Villa 42" and "Phase 2:
+  Structural Integrity" regardless of what was loaded.
+
+Each is now derived: headcount from the `workers_present` a supervisor
+actually recorded, the pulse rail from `activity_log`, the findings rail from
+open alerts, the counters from `projects`, and the today marker from the
+project's start date.
+
 ## Where the queries live
 
 `src/api/` is the data layer — one module per domain, each returning

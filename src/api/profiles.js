@@ -137,3 +137,36 @@ export async function listProfilesByRole(role) {
     role: r.role,
   }))
 }
+
+/**
+ * The two counters on the Settings profile card.
+ *
+ * They used to be `activeProjects: 12` and `teamsLed: '04'` from a fixture,
+ * shown under the signed-in user's own name and photo — the most personal
+ * place in the app to put someone else's numbers.
+ *
+ * "Teams led" is projects where you are the MANAGER, which is what leading a
+ * team means here; membership alone is not.
+ */
+export async function getProfileStats(uid) {
+  requireConfigured()
+  if (!uid) return { activeProjects: 0, teamsLed: 0 }
+
+  const [active, led] = await Promise.all([
+    /* RLS already limits this to projects you can reach, so no filter on the
+       viewer is needed — or possible to get wrong. */
+    supabase
+      .from('projects')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'active'),
+    supabase
+      .from('projects')
+      .select('id', { count: 'exact', head: true })
+      .eq('manager_uid', uid),
+  ])
+
+  return {
+    activeProjects: active.count ?? 0,
+    teamsLed: led.count ?? 0,
+  }
+}

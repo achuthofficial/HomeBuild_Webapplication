@@ -48,6 +48,66 @@ function uniqueName(file) {
   return `${stamp}-${rand}.${extensionOf(file)}`
 }
 
+/**
+ * Downscale before upload — PRD 5.2.5, "auto-compression to 1080p before
+ * upload (to handle low-bandwidth sites)".
+ *
+ * This is not a nicety. The supervisor persona is on a basic Android phone
+ * with poor site connectivity, and a modern phone camera produces 4-6 MB
+ * files; 1080p JPEG at quality 0.82 is typically 200-400 KB, which is the
+ * difference between an upload that finishes and one that times out.
+ *
+ * Longest edge, not width, so a portrait photo is bounded too. Returns the
+ * ORIGINAL FILE on any failure — HEIC in particular is not decodable in most
+ * browsers, and a photo that uploads at full size beats one that does not
+ * upload at all.
+ */
+const MAX_EDGE = 1920
+const JPEG_QUALITY = 0.82
+
+export async function compressImage(file) {
+  if (typeof createImageBitmap !== 'function') return file
+
+  try {
+    const bitmap = await createImageBitmap(file)
+    const longest = Math.max(bitmap.width, bitmap.height)
+
+    /* Already within budget: re-encoding would cost quality for nothing. */
+    if (longest <= MAX_EDGE) {
+      bitmap.close?.()
+      return file
+    }
+
+    const scale = MAX_EDGE / longest
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(bitmap.width * scale)
+    canvas.height = Math.round(bitmap.height * scale)
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return file
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    bitmap.close?.()
+
+    const blob = await new Promise((resolve) =>
+      canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY),
+    )
+    if (!blob) return file
+
+    /* Guard against the pathological case where re-encoding grows the file. */
+    if (blob.size >= file.size) return file
+
+    const name = file.name?.replace(/\.[^.]+$/, '') ?? 'photo'
+    return new File([blob], `${name}.jpg`, {
+      type: 'image/jpeg',
+      lastModified: Date.now(),
+    })
+  } catch {
+    /* Undecodable format (HEIC), tainted canvas, out of memory — upload the
+       original rather than failing the supervisor's only job on this screen. */
+    return file
+  }
+}
+
 function unavailable() {
   return {
     data: null,
@@ -74,11 +134,13 @@ export async function uploadAvatar(file, uid) {
   const invalid = validateImage(file)
   if (invalid) return { data: null, error: invalid }
 
-  const path = `${uid}/avatar.${extensionOf(file)}`
+  /* An avatar is displayed at 40px; a 12-megapixel one helps nobody. */
+  const upload = await compressImage(file)
+  const path = `${uid}/avatar.${extensionOf(upload)}`
 
   const { error } = await supabase.storage
     .from(BUCKETS.avatars)
-    .upload(path, file, { upsert: true, contentType: file.type })
+    .upload(path, upload, { upsert: true, contentType: upload.type })
 
   if (error) return { data: null, error: readable(error) }
 
@@ -105,11 +167,13 @@ export async function uploadSitePhoto(file, entryId, uid) {
   const invalid = validateImage(file)
   if (invalid) return { data: null, error: invalid }
 
-  const path = `${entryId}/${uid}/${uniqueName(file)}`
+  /* Validate the file the user picked, upload the downscaled one. */
+  const upload = await compressImage(file)
+  const path = `${entryId}/${uid}/${uniqueName(upload)}`
 
   const { error } = await supabase.storage
     .from(BUCKETS.sitePhotos)
-    .upload(path, file, { contentType: file.type })
+    .upload(path, upload, { contentType: upload.type })
 
   if (error) return { data: null, error: readable(error) }
 

@@ -32,6 +32,7 @@ export async function listFeedEntries({ projectId, category } = {}) {
     .from('site_updates')
     .select(`
       id, work_category, location_on_site, notes, status, uploaded_at,
+      workers_present, materials_used,
       projects ( id, name ),
       supervisor:profiles!site_updates_supervisor_uid_fkey ( full_name, avatar_url ),
       site_update_photos ( id, storage_path, caption )
@@ -77,6 +78,8 @@ export async function listFeedEntries({ projectId, category } = {}) {
     date: row.uploaded_at,
     status: STATUS_LABELS[row.status] ?? STATUS_LABELS.in_progress,
     note: row.notes,
+    workersPresent: row.workers_present ?? null,
+    materialsUsed: row.materials_used ?? null,
     team: row.supervisor?.avatar_url ? [row.supervisor.avatar_url] : [],
     supervisor: row.supervisor?.full_name ?? null,
     photos: (row.site_update_photos ?? []).map((p) => ({
@@ -107,6 +110,8 @@ export async function createSiteUpdate({
   notes,
   status = 'in_progress',
   milestoneId = null,
+  workersPresent = null,
+  materialsUsed = null,
 }) {
   requireConfigured()
   return unwrap(
@@ -120,10 +125,57 @@ export async function createSiteUpdate({
         notes: notes || null,
         status,
         milestone_id: milestoneId || null,
+        /* PRD 5.2.5 optional metadata. */
+        workers_present: workersPresent ? Number(workersPresent) : null,
+        materials_used: materialsUsed?.trim() || null,
       })
       .select('id')
       .single(),
   )
+}
+
+/**
+ * Share of site updates by work category — the "Activity Breakdown" list.
+ *
+ * It used to be four fixed percentages in a data file (Casting 45, Structural
+ * Steel 28, Electrical 17, Others 10) that were identical on every project.
+ *
+ * Percentages are cumulative-rounded so the list totals exactly 100 rather
+ * than 99 or 101, which is visible when four numbers sit in a column.
+ */
+const BREAKDOWN_TONES = ['success', 'brand', 'violet', 'neutral']
+
+export async function getActivityBreakdown(projectId) {
+  requireConfigured()
+
+  let query = supabase.from('site_updates').select('work_category')
+  if (projectId) query = query.eq('project_id', projectId)
+  const rows = unwrap(await query)
+  if (!rows.length) return []
+
+  const counts = new Map()
+  for (const r of rows) {
+    counts.set(r.work_category, (counts.get(r.work_category) ?? 0) + 1)
+  }
+
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1])
+  /* Everything past the top three becomes "Others", so the list stays
+     readable on a project with a dozen categories. */
+  const top = ranked.slice(0, 3)
+  const restCount = ranked.slice(3).reduce((sum, [, n]) => sum + n, 0)
+  if (restCount > 0) top.push(['Others', restCount])
+
+  const total = rows.length
+  let cumulative = 0
+  let previousPct = 0
+
+  return top.map(([label, count], i) => {
+    cumulative += count
+    const runningPct = Math.round((cumulative / total) * 100)
+    const value = runningPct - previousPct
+    previousPct = runningPct
+    return { label, value, tone: BREAKDOWN_TONES[i] ?? 'neutral' }
+  })
 }
 
 /** Records an uploaded photo against an update. */

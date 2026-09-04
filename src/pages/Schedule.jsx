@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { FileDown, ListFilter, TrendingUp, Users, Zap } from 'lucide-react'
+import { FileDown, ListFilter, TrendingUp, TriangleAlert, Users, Zap } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
 import Card, { CardHeader } from '@/components/ui/Card'
@@ -19,6 +19,7 @@ import {
   getSchedule,
   setPhaseStatus,
   applyForecast,
+  getScheduleSidebar,
   getDelayAnalysis,
   DELAY_CAUSES,
   PHASE_ACTIONS,
@@ -26,12 +27,7 @@ import {
 import { listActivity } from '@/api/activity'
 import { downloadCsv } from '@/lib/csv'
 import { longDate, clockTime, rupees } from '@/lib/format'
-import {
-  scheduleViews,
-  scheduleHealth,
-  workforce,
-  timelinePulse,
-} from '@/data/schedule'
+import { scheduleViews } from '@/data/schedule'
 
 /** Filter labels mapped onto the stored phase status. */
 const STATUS_FILTER_KEYS = {
@@ -49,6 +45,15 @@ const pulseDots = {
   success: 'bg-success',
   warning: 'bg-warning',
   danger: 'bg-danger',
+  neutral: 'bg-line-strong',
+}
+
+/** Colours the pulse dot by what the audit entry actually records. */
+function pulseTone(action) {
+  if (action === 'status_changed' || action === 'selected') return 'success'
+  if (action === 'forecast_applied') return 'warning'
+  if (action === 'resolved' || action === 'delayed') return 'danger'
+  return 'neutral'
 }
 
 /** List and Board fall back to a flat rendering of the same task data. */
@@ -162,6 +167,32 @@ export default function Schedule() {
       .filter((g) => g.tasks.length > 0)
   }, [allGroups, statusFilter])
 
+  /* The three cards beside the Gantt, from real project data. */
+  const sidebar = useQuery(
+    () => getScheduleSidebar(projectId),
+    [projectId],
+    { enabled: Boolean(projectId) },
+  )
+  const health = sidebar.data?.health ?? {
+    value: 0,
+    caption: '',
+    onTrack: true,
+    nextMilestone: null,
+    daysRemaining: null,
+    overdue: false,
+    phasesDone: 0,
+    phaseCount: 0,
+  }
+  const workforce = sidebar.data?.workforce ?? { trades: [], reported: false }
+
+  /* Only the three most recent entries are shown, but the audit drawer wants
+     the same list — one query serves both. */
+  const pulse = useQuery(
+    () => listActivity({ projectId, limit: 3 }),
+    [projectId],
+    { enabled: Boolean(projectId) },
+  )
+
   /* PRD 5.4.4. Refetched alongside the schedule, because the two answer the
      same question from different ends. */
   const delays = useQuery(
@@ -195,6 +226,8 @@ export default function Schedule() {
       )
       schedule.refetch()
       delays.refetch()
+      sidebar.refetch()
+      pulse.refetch()
     } catch (error) {
       toast(error.message, { tone: 'info' })
     } finally {
@@ -228,6 +261,8 @@ export default function Schedule() {
       /* A completed phase moves the project's progress via a trigger. */
       schedule.refetch()
       delays.refetch()
+      sidebar.refetch()
+      pulse.refetch()
     } catch (error) {
       toast(error.message, { tone: 'info' })
     } finally {
@@ -251,6 +286,8 @@ export default function Schedule() {
       setDelayFor(null)
       schedule.refetch()
       delays.refetch()
+      sidebar.refetch()
+      pulse.refetch()
     } catch (error) {
       toast(error.message, { tone: 'info' })
     } finally {
@@ -263,7 +300,11 @@ export default function Schedule() {
       <PageHeader
         breadcrumbs={[
           { label: 'Projects', to: '/projects' },
-          { label: 'Sky Villa 42', to: '/projects' },
+          /* The loaded project, not a name baked into the breadcrumb. */
+          {
+            label: projectQuery.data?.name ?? 'Project',
+            to: '/projects',
+          },
           { label: 'Schedule' },
         ]}
         title="Master Construction Schedule"
@@ -329,7 +370,12 @@ export default function Schedule() {
         skeleton={<Skeleton className="h-[320px] w-full rounded-[12px]" />}
       >
         {view === 'Gantt' ? (
-          <GanttChart groups={groups} months={schedule.data?.months ?? []} onTaskClick={setTask} />
+          <GanttChart
+            groups={groups}
+            months={schedule.data?.months ?? []}
+            today={schedule.data?.today ?? null}
+            onTaskClick={setTask}
+          />
         ) : null}
         {view === 'List' ? <TaskList groups={groups} /> : null}
         {view === 'Board' ? <TaskBoard groups={groups} /> : null}
@@ -340,41 +386,76 @@ export default function Schedule() {
         <Card className="p-5">
           <h2 className="text-[15px] font-semibold text-ink">Schedule Health</h2>
 
-          <div className="mt-4 flex items-end justify-between gap-3">
-            <div>
-              <p className="tnum text-[34px] font-bold leading-none text-success">
-                {scheduleHealth.value}%
-              </p>
-              <p className="mt-2 text-[12px] text-ink-2">
-                {scheduleHealth.caption}
-              </p>
-            </div>
-            <span className="inline-flex items-center gap-1 rounded-full bg-success-bg px-2 py-1 text-[11px] font-semibold text-success">
-              <TrendingUp className="size-3" strokeWidth={2} />+
-              {scheduleHealth.delta}%
-            </span>
-          </div>
-
-          <div className="mt-6">
-            <div className="flex items-end justify-between gap-3">
-              <p className="text-[12px] text-ink-2">
-                Next Milestone: {scheduleHealth.nextMilestone}
-              </p>
-              <p className="tnum shrink-0 text-right text-[12px] font-semibold text-ink">
-                {scheduleHealth.daysRemaining}
-                <span className="block text-[10px] font-normal text-ink-3">
-                  Days
+          {sidebar.isLoading ? (
+            <RowSkeleton rows={2} />
+          ) : (
+            <>
+              <div className="mt-4 flex items-end justify-between gap-3">
+                <div>
+                  <p
+                    className={cn(
+                      'tnum text-[34px] font-bold leading-none',
+                      health.onTrack ? 'text-success' : 'text-danger',
+                    )}
+                  >
+                    {health.value}%
+                  </p>
+                  <p className="mt-2 text-[12px] text-ink-2">{health.caption}</p>
+                </div>
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold',
+                    health.onTrack
+                      ? 'bg-success-bg text-success'
+                      : 'bg-danger-bg text-danger',
+                  )}
+                >
+                  {health.onTrack ? (
+                    <TrendingUp className="size-3" strokeWidth={2} />
+                  ) : (
+                    <TriangleAlert className="size-3" strokeWidth={2} />
+                  )}
+                  {health.phasesDone}/{health.phaseCount} phases
                 </span>
-              </p>
-            </div>
-            <ProgressBar
-              value={scheduleHealth.progress}
-              tone="success"
-              size="lg"
-              className="mt-2.5"
-              label="Milestone progress"
-            />
-          </div>
+              </div>
+
+              <div className="mt-6">
+                {health.nextMilestone ? (
+                  <>
+                    <div className="flex items-end justify-between gap-3">
+                      <p className="truncate text-[12px] text-ink-2">
+                        Next Milestone: {health.nextMilestone}
+                      </p>
+                      {health.daysRemaining !== null ? (
+                        <p
+                          className={cn(
+                            'tnum shrink-0 text-right text-[12px] font-semibold',
+                            health.overdue ? 'text-danger' : 'text-ink',
+                          )}
+                        >
+                          {Math.abs(health.daysRemaining)}
+                          <span className="block text-[10px] font-normal text-ink-3">
+                            {health.overdue ? 'Days Late' : 'Days'}
+                          </span>
+                        </p>
+                      ) : null}
+                    </div>
+                    <ProgressBar
+                      value={health.value}
+                      tone={health.onTrack ? 'success' : 'danger'}
+                      size="lg"
+                      className="mt-2.5"
+                      label="Project progress"
+                    />
+                  </>
+                ) : (
+                  <p className="text-[12px] text-ink-2">
+                    Every milestone on this project is paid.
+                  </p>
+                )}
+              </div>
+            </>
+          )}
         </Card>
 
         {/* ---------------- workforce ---------------- */}
@@ -386,21 +467,39 @@ export default function Schedule() {
             <Users className="size-4 text-ink-4" strokeWidth={1.75} />
           </div>
 
-          <div className="mt-4 grid grid-cols-3 gap-2.5">
-            {workforce.groups.map((group) => (
-              <div
-                key={group.label}
-                className="rounded-[10px] border border-line bg-canvas px-2 py-3 text-center"
-              >
-                <p className="tnum text-[20px] font-bold leading-none text-violet">
-                  {group.value}
-                </p>
-                <p className="mt-1.5 text-[10.5px] leading-tight text-ink-3">
-                  {group.label}
-                </p>
+          {/* Headcount comes from what supervisors reported on their site
+              updates (PRD 5.2.5 "workers present"). There is no staffing table
+              in this product, and inventing one to fill a card would be worse
+              than the card saying nothing is recorded. */}
+          {sidebar.isLoading ? (
+            <RowSkeleton rows={2} />
+          ) : workforce.reported ? (
+            <>
+              <div className="mt-4 grid grid-cols-3 gap-2.5">
+                {workforce.trades.map((trade) => (
+                  <div
+                    key={trade.label}
+                    className="rounded-[10px] border border-line bg-canvas px-2 py-3 text-center"
+                  >
+                    <p className="tnum text-[20px] font-bold leading-none text-violet">
+                      {trade.value}
+                    </p>
+                    <p className="mt-1.5 truncate text-[10.5px] leading-tight text-ink-3">
+                      {trade.label}
+                    </p>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+              <p className="mt-3 text-[11px] leading-snug text-ink-3">
+                Latest headcount reported per trade, from recent site updates.
+              </p>
+            </>
+          ) : (
+            <p className="mt-4 text-[12px] leading-relaxed text-ink-2">
+              No headcount recorded yet. Supervisors can add “workers present”
+              when posting a site update.
+            </p>
+          )}
 
           <div className="mt-4 flex items-start gap-2.5 rounded-[10px] bg-violet-bg px-3.5 py-3">
             <span className="mt-px flex size-6 shrink-0 items-center justify-center rounded-[7px] bg-surface">
@@ -408,19 +507,24 @@ export default function Schedule() {
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-[12px] font-semibold text-ink">
-                {workforce.optimization.title}
+                Recalculate Forecast
               </p>
+              {/* This panel used to read "Optimization Active — shifting 4
+                  staff to framing next week", which was neither active nor
+                  connected to anything. The button underneath always ran the
+                  forecast; now the label says so. */}
               <p className="mt-0.5 text-[11px] leading-snug text-ink-2">
-                {workforce.optimization.body}
+                Push current delays and open high-severity alerts into the
+                phases ahead.
               </p>
             </div>
             <button
               type="button"
-              disabled={forecasting}
+              disabled={forecasting || !projectId}
               onClick={runForecast}
-              className="focus-ring shrink-0 rounded text-[11.5px] font-semibold text-brand-ink hover:underline"
+              className="focus-ring shrink-0 rounded text-[11.5px] font-semibold text-brand-ink hover:underline disabled:opacity-50"
             >
-              {workforce.optimization.action}
+              {forecasting ? 'Running…' : 'Run'}
             </button>
           </div>
         </Card>
@@ -429,24 +533,37 @@ export default function Schedule() {
         <Card className="p-5">
           <h2 className="text-[15px] font-semibold text-ink">Timeline Pulse</h2>
 
-          <ol className="mt-4 space-y-3.5">
-            {timelinePulse.map((item) => (
-              <li key={item.id} className="flex items-start gap-2.5">
-                <span
-                  className={cn(
-                    'mt-1 size-2 shrink-0 rounded-full',
-                    pulseDots[item.tone],
-                  )}
-                />
-                <div className="min-w-0">
-                  <p className="text-[12.5px] font-medium leading-snug text-ink">
-                    {item.title}
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-ink-3">{item.meta}</p>
-                </div>
-              </li>
-            ))}
-          </ol>
+          {/* The three most recent entries from this project's audit trail.
+              They used to be three hard-coded lines naming people who are not
+              in the database. */}
+          {pulse.isLoading ? (
+            <RowSkeleton rows={3} />
+          ) : (pulse.data?.length ?? 0) === 0 ? (
+            <p className="mt-4 text-[12px] text-ink-2">
+              Nothing recorded on this project yet.
+            </p>
+          ) : (
+            <ol className="mt-4 space-y-3.5">
+              {pulse.data.slice(0, 3).map((item) => (
+                <li key={item.id} className="flex items-start gap-2.5">
+                  <span
+                    className={cn(
+                      'mt-1 size-2 shrink-0 rounded-full',
+                      pulseDots[pulseTone(item.action)],
+                    )}
+                  />
+                  <div className="min-w-0">
+                    <p className="text-[12.5px] font-medium leading-snug text-ink">
+                      {item.summary}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-ink-3">
+                      {item.actor ?? 'System'} · {longDate(item.at)}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
 
           <button
             type="button"
