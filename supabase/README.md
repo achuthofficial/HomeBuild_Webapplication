@@ -229,6 +229,51 @@ but blocks assigning the project to a different PM — and would let a creator
 hand a project away and lose access to it in the same statement. The function
 runs as definer, sets any manager, and always records the creator as a member.
 
+### Upgrading a database that already had data
+
+`schema.sql` repairs as it runs, and says what it touched. Watch for these
+notices:
+
+```
+NOTICE:  schedule_phases: removed 11 duplicate row(s), renumbered 0
+NOTICE:  restored 2 missing column default(s)
+```
+
+It reconciles three things an existing database can get wrong, none of which
+`create table if not exists` can fix on its own:
+
+| Symptom | What the script does |
+|---|---|
+| `ERROR: 42703: column "city" does not exist` | Adds every missing column |
+| `ERROR: 23505: could not create unique index` | De-duplicates first — see below |
+| `ERROR: null value in column "id"` | Restores `gen_random_uuid()` / `now()` defaults |
+
+De-duplication loses nothing that cannot be proven redundant. Rows identical in
+both key and name are an accidental double-insert and all but the oldest go;
+rows that merely collide on a sequence are different records claiming one slot,
+so they are renumbered instead. Superseded invitations are revoked rather than
+deleted, because who invited whom is audit history.
+
+**After upgrading, projects that predate the membership model are invisible.**
+That is Row Level Security working — you reach a project by being its manager,
+its customer, or a listed member, and a project imported from an older schema
+is none of those. To adopt them, run this once with your own Firebase UID
+(Settings shows it, or read it from `profiles`):
+
+```sql
+insert into public.project_members (project_id, member_uid, role)
+select p.id, 'YOUR_FIREBASE_UID', 'manager'
+from public.projects p
+where not exists (
+  select 1 from public.project_members m where m.project_id = p.id
+)
+on conflict do nothing;
+```
+
+Deliberately not shipped as a function: it grants access to every unowned
+project, which is fine when you run it by hand on your own database and is not
+something any signed-in user should be able to call.
+
 ### First sign-in looks empty, and that is correct
 
 `seed.sql` assigns its projects to placeholder `seed-` profiles, so a real

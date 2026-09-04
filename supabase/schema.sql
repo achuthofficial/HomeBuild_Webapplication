@@ -281,6 +281,25 @@ alter table public.site_updates
 -- constraint matching" instead of collapsing. A plain unique index does the
 -- right thing anyway: NULLs are distinct in a unique index, so the many
 -- updates posted while online never collide with each other.
+/* Should never collide — the token exists precisely to make a retry a no-op —
+   but an older database could hold one from before the index existed. */
+do $$
+declare v_removed integer;
+begin
+  with ranked as (
+    select id, row_number() over (
+             partition by client_token order by created_at, id) as rn
+    from public.site_updates
+    where client_token is not null
+  )
+  delete from public.site_updates s using ranked r
+  where s.id = r.id and r.rn > 1;
+  get diagnostics v_removed = row_count;
+  if v_removed > 0 then
+    raise notice 'site_updates: removed % duplicate update(s)', v_removed;
+  end if;
+end $$;
+
 create unique index if not exists site_updates_client_token_idx
   on public.site_updates(client_token);
 
@@ -389,6 +408,38 @@ alter table public.milestones
   add column if not exists updated_at timestamptz not null default now();
 
 create index if not exists milestones_project_idx on public.milestones(project_id);
+/* Same treatment as schedule_phases below — a milestone is money, so a
+   collision is renumbered rather than deleted unless the row is provably a
+   duplicate of one already there. */
+do $$
+declare v_removed integer; v_moved integer;
+begin
+  with ranked as (
+    select id, row_number() over (
+             partition by project_id, sequence, name order by created_at, id) as rn
+    from public.milestones
+  )
+  delete from public.milestones m using ranked r
+  where m.id = r.id and r.rn > 1;
+  get diagnostics v_removed = row_count;
+
+  with ranked as (
+    select id, row_number() over (
+             partition by project_id order by sequence, created_at, id) as rn
+    from public.milestones
+  )
+  update public.milestones m
+  set sequence = r.rn
+  from ranked r
+  where m.id = r.id and m.sequence is distinct from r.rn;
+  get diagnostics v_moved = row_count;
+
+  if v_removed > 0 or v_moved > 0 then
+    raise notice 'milestones: removed % duplicate row(s), renumbered %',
+      v_removed, v_moved;
+  end if;
+end $$;
+
 create unique index if not exists milestones_sequence_idx
   on public.milestones(project_id, sequence);
 
@@ -513,6 +564,54 @@ alter table public.schedule_phases
   add column if not exists delay_recoverable boolean;
 
 create index if not exists schedule_phases_project_idx on public.schedule_phases(project_id);
+/* ---------------------------------------------------------------------------
+   Pre-flight: reconcile data before the unique index that depends on it.
+
+   A `create unique index` fails outright on data that already violates it, and
+   an existing database can easily hold such rows — the phase template used to
+   be seeded from the browser, so running it twice left two rows claiming the
+   same slot. Reported as:
+
+     ERROR: 23505: could not create unique index "schedule_phases_sequence_idx"
+     DETAIL: Key (project_id, sequence)=(…, 1) is duplicated.
+
+   The rule below, and for every other unique index in this file, is to lose
+   nothing that cannot be proven redundant:
+     · Rows identical in both key AND name are an accidental double-insert;
+       all but the oldest go.
+     · Rows that merely collide on a sequence are DIFFERENT phases claiming one
+       slot. They are renumbered, not deleted — relative order preserved.
+   Both report what they touched with `raise notice`.
+   --------------------------------------------------------------------------- */
+do $$
+declare v_removed integer; v_moved integer;
+begin
+  with ranked as (
+    select id, row_number() over (
+             partition by project_id, sequence, name order by created_at, id) as rn
+    from public.schedule_phases
+  )
+  delete from public.schedule_phases p using ranked r
+  where p.id = r.id and r.rn > 1;
+  get diagnostics v_removed = row_count;
+
+  with ranked as (
+    select id, row_number() over (
+             partition by project_id order by sequence, created_at, id) as rn
+    from public.schedule_phases
+  )
+  update public.schedule_phases p
+  set sequence = r.rn
+  from ranked r
+  where p.id = r.id and p.sequence is distinct from r.rn;
+  get diagnostics v_moved = row_count;
+
+  if v_removed > 0 or v_moved > 0 then
+    raise notice 'schedule_phases: removed % duplicate row(s), renumbered %',
+      v_removed, v_moved;
+  end if;
+end $$;
+
 create unique index if not exists schedule_phases_sequence_idx
   on public.schedule_phases(project_id, sequence);
 
@@ -534,6 +633,24 @@ alter table public.budget_entries
   add column if not exists period date,
   add column if not exists amount bigint not null default 0,
   add column if not exists created_at timestamptz not null default now();
+
+/* One month, one figure. These are a monthly total rather than a ledger, so a
+   second row for the same month supersedes the first. */
+do $$
+declare v_removed integer;
+begin
+  with ranked as (
+    select id, row_number() over (
+             partition by project_id, period order by created_at desc, id desc) as rn
+    from public.budget_entries
+  )
+  delete from public.budget_entries b using ranked r
+  where b.id = r.id and r.rn > 1;
+  get diagnostics v_removed = row_count;
+  if v_removed > 0 then
+    raise notice 'budget_entries: removed % superseded row(s)', v_removed;
+  end if;
+end $$;
 
 create unique index if not exists budget_entries_period_idx
   on public.budget_entries(project_id, period);
@@ -626,6 +743,26 @@ create index if not exists expenses_incurred_idx on public.expenses(project_id, 
 
 /* Partial unique index, so advance_milestone() can post its expense with
    `on conflict do nothing` and a re-run cannot bill the release twice. */
+/* Two ledger lines against one milestone means the release was billed twice.
+   The oldest is the real one; the rest are duplicates of a payment that only
+   happened once, so keeping them would overstate what the project has spent. */
+do $$
+declare v_removed integer;
+begin
+  with ranked as (
+    select id, row_number() over (
+             partition by milestone_id order by created_at, id) as rn
+    from public.expenses
+    where milestone_id is not null
+  )
+  delete from public.expenses e using ranked r
+  where e.id = r.id and r.rn > 1;
+  get diagnostics v_removed = row_count;
+  if v_removed > 0 then
+    raise notice 'expenses: removed % duplicate escrow line(s)', v_removed;
+  end if;
+end $$;
+
 create unique index if not exists expenses_milestone_idx
   on public.expenses(milestone_id) where milestone_id is not null;
 
@@ -686,6 +823,52 @@ stable
 as $$
   select public.firebase_uid() is not null
 $$;
+
+-- =============================================================================
+-- Column defaults
+--
+-- The reconciliation above adds MISSING columns. It cannot fix a column that
+-- exists but was declared without its default, which is what an older or
+-- hand-made table looks like: `id uuid primary key` with no
+-- `default gen_random_uuid()` means every insert fails with
+--
+--   ERROR: null value in column "id" of relation "projects"
+--
+-- and the primary key is exactly the column the reconciliation has to skip,
+-- since ADD COLUMN cannot introduce one.
+--
+-- Driven off the catalogue rather than a hard-coded list, so it covers every
+-- table this file owns and stays correct as tables are added.
+-- =============================================================================
+do $$
+declare r record; v_fixed integer := 0;
+begin
+  for r in
+    select c.table_name, c.column_name, c.data_type
+    from information_schema.columns c
+    join information_schema.tables t
+      on t.table_schema = c.table_schema and t.table_name = c.table_name
+    where c.table_schema = 'public'
+      and t.table_type = 'BASE TABLE'
+      and c.column_default is null
+      and (
+        (c.column_name = 'id' and c.data_type = 'uuid') or
+        (c.column_name in ('created_at', 'updated_at')
+         and c.data_type = 'timestamp with time zone')
+      )
+  loop
+    execute format(
+      'alter table public.%I alter column %I set default %s',
+      r.table_name, r.column_name,
+      case when r.column_name = 'id' then 'gen_random_uuid()' else 'now()' end
+    );
+    v_fixed := v_fixed + 1;
+  end loop;
+
+  if v_fixed > 0 then
+    raise notice 'restored % missing column default(s)', v_fixed;
+  end if;
+end $$;
 
 alter table public.profiles              enable row level security;
 alter table public.projects              enable row level security;
@@ -816,6 +999,27 @@ alter table public.invitations
   add column if not exists expires_at timestamptz not null default (now() + interval '7 days'),
   add column if not exists accepted_at timestamptz,
   add column if not exists created_at timestamptz not null default now();
+
+/* Only one invitation to an address may be pending at a time. Older ones are
+   revoked rather than deleted: who invited whom, and when, is audit history. */
+do $$
+declare v_revoked integer;
+begin
+  with ranked as (
+    select id, row_number() over (
+             partition by lower(email) order by created_at desc, id desc) as rn
+    from public.invitations
+    where status = 'pending'
+  )
+  update public.invitations i
+  set status = 'revoked'
+  from ranked r
+  where i.id = r.id and r.rn > 1;
+  get diagnostics v_revoked = row_count;
+  if v_revoked > 0 then
+    raise notice 'invitations: revoked % superseded pending invite(s)', v_revoked;
+  end if;
+end $$;
 
 create unique index if not exists invitations_pending_email_idx
   on public.invitations(lower(email))
