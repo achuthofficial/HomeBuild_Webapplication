@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { FileDown, ListFilter, TrendingUp, Users, Zap } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
-import Card from '@/components/ui/Card'
+import Card, { CardHeader } from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Chip from '@/components/ui/Chip'
 import Segmented from '@/components/ui/Segmented'
@@ -19,11 +19,13 @@ import {
   getSchedule,
   setPhaseStatus,
   applyForecast,
+  getDelayAnalysis,
+  DELAY_CAUSES,
   PHASE_ACTIONS,
 } from '@/api/schedule'
 import { listActivity } from '@/api/activity'
 import { downloadCsv } from '@/lib/csv'
-import { longDate, clockTime } from '@/lib/format'
+import { longDate, clockTime, rupees } from '@/lib/format'
 import {
   scheduleViews,
   scheduleHealth,
@@ -129,6 +131,15 @@ export default function Schedule() {
   const [forecasting, setForecasting] = useState(false)
   const [phaseBusy, setPhaseBusy] = useState(false)
   const [statusFilter, setStatusFilter] = useState('All Phases')
+  /* The delay dialog. Declared with the rest of the state rather than beside
+     its modal, since the queries below close over it. */
+  const [delayFor, setDelayFor] = useState(null)
+  const [delayForm, setDelayForm] = useState({
+    delayDays: 7,
+    cause: 'Material delay',
+    costImpact: '',
+    recoverable: 'true',
+  })
 
   const projectQuery = useQuery(() => getPrimaryProjectId(), [])
   const projectId = projectQuery.data?.id ?? null
@@ -151,6 +162,14 @@ export default function Schedule() {
       .filter((g) => g.tasks.length > 0)
   }, [allGroups, statusFilter])
 
+  /* PRD 5.4.4. Refetched alongside the schedule, because the two answer the
+     same question from different ends. */
+  const delays = useQuery(
+    () => getDelayAnalysis(projectId),
+    [projectId],
+    { enabled: Boolean(projectId) },
+  )
+
   /* Loaded only when the drawer opens — it is a long table nobody reads on
      every visit. */
   const audit = useQuery(
@@ -161,7 +180,8 @@ export default function Schedule() {
 
   /**
    * PRD 5.4.3's forecast: cumulative delay pushed into the phases that follow,
-   * plus the documented monsoon buffer. Rule-based, no model involved.
+   * the monsoon buffer for weeks 22-36, and rework days for every open
+   * high-severity alert. Rule-based, no model involved.
    */
   const runForecast = async () => {
     if (!projectId) return
@@ -174,6 +194,7 @@ export default function Schedule() {
           : 'Forecast recalculated. Nothing needed shifting.',
       )
       schedule.refetch()
+      delays.refetch()
     } catch (error) {
       toast(error.message, { tone: 'info' })
     } finally {
@@ -183,6 +204,22 @@ export default function Schedule() {
 
   /** Phase status from the task detail dialog. */
   const changePhase = async (phase, status, label) => {
+    /* Flagging a delay asks for the 5.4.4 detail rather than just setting the
+       status: a delay with no recorded cause is the one thing the analysis
+       cannot report on later. */
+    if (status === 'delayed') {
+      setDelayForm({
+        delayDays: phase.delayDays || 7,
+        cause: phase.delayCause ?? 'Material delay',
+        costImpact: phase.delayCostImpact || '',
+        recoverable:
+          phase.delayRecoverable === false ? 'false' : 'true',
+      })
+      setDelayFor(phase)
+      setTask(null)
+      return
+    }
+
     setPhaseBusy(true)
     try {
       await setPhaseStatus(phase.id, status)
@@ -190,6 +227,30 @@ export default function Schedule() {
       toast(`“${phase.name}” — ${label.toLowerCase()}.`)
       /* A completed phase moves the project's progress via a trigger. */
       schedule.refetch()
+      delays.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setPhaseBusy(false)
+    }
+  }
+
+  /** Records a delay with its root cause and cost impact (PRD 5.4.4). */
+  const saveDelay = async (e) => {
+    e.preventDefault()
+    if (!delayFor) return
+    setPhaseBusy(true)
+    try {
+      await setPhaseStatus(delayFor.id, 'delayed', {
+        delayDays: Number(delayForm.delayDays) || 7,
+        cause: delayForm.cause,
+        costImpact: delayForm.costImpact,
+        recoverable: delayForm.recoverable === 'true',
+      })
+      toast(`“${delayFor.name}” flagged as delayed.`)
+      setDelayFor(null)
+      schedule.refetch()
+      delays.refetch()
     } catch (error) {
       toast(error.message, { tone: 'info' })
     } finally {
@@ -397,6 +458,108 @@ export default function Schedule() {
         </Card>
       </div>
 
+      {/* ---------------- delay analysis (PRD 5.4.4) ---------------- */}
+      <Card className="mt-4 p-5">
+        <CardHeader
+          title="Delay Analysis"
+          subtitle="Every phase that has overrun its baseline, and what it cost."
+        />
+        <div className="mt-4">
+          {projectQuery.isLoading || delays.isLoading ? (
+            <RowSkeleton rows={2} />
+          ) : projectQuery.error ?? delays.error ? (
+            <p className="py-8 text-center text-[13px] text-danger">
+              {projectQuery.error ?? delays.error}
+            </p>
+          ) : (delays.data?.phases.length ?? 0) === 0 ? (
+            <p className="py-8 text-center text-[13px] text-ink-2">
+              No phase has overrun its baseline. Flagging one as delayed records
+              its cause here.
+            </p>
+          ) : (
+            <>
+              <div className="mb-4 grid grid-cols-3 gap-3">
+                <div>
+                  <p className="eyebrow">Weeks Added</p>
+                  <p className="tnum mt-1 text-[19px] font-bold leading-none text-danger">
+                    {delays.data.totalWeeks}
+                  </p>
+                </div>
+                <div>
+                  <p className="eyebrow">Cost Impact</p>
+                  <p className="tnum mt-1 text-[19px] font-bold leading-none text-ink">
+                    {rupees(delays.data.totalCost)}
+                  </p>
+                </div>
+                <div>
+                  <p className="eyebrow">Recoverable</p>
+                  <p className="tnum mt-1 text-[19px] font-bold leading-none text-success">
+                    {delays.data.recoverableWeeks}
+                    <span className="text-[12px] font-medium text-ink-4"> wks</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="-mx-5 overflow-x-auto">
+                <table className="w-full min-w-[560px] border-collapse">
+                  <thead>
+                    <tr className="border-y border-line bg-canvas/60">
+                      {['Phase', 'Root Cause', 'Weeks Added', 'Cost Impact', 'Recoverable'].map(
+                        (h) => (
+                          <th
+                            key={h}
+                            className="eyebrow px-5 py-2.5 text-left first:pl-5"
+                          >
+                            {h}
+                          </th>
+                        ),
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {delays.data.phases.map((d) => (
+                      <tr key={d.id} className="border-b border-line last:border-b-0">
+                        <td className="px-5 py-3 text-[13px] font-medium text-ink">
+                          {d.name}
+                        </td>
+                        <td className="px-5 py-3 text-[12.5px] text-ink-2">
+                          {d.cause}
+                        </td>
+                        <td className="tnum px-5 py-3 text-[12.5px] text-danger">
+                          +{d.weeks}
+                        </td>
+                        <td className="tnum px-5 py-3 text-[12.5px] text-ink-2">
+                          {d.costImpact ? rupees(d.costImpact) : '—'}
+                        </td>
+                        <td className="px-5 py-3">
+                          {/* Three states, not two: nobody has judged it yet
+                              is different from judged unrecoverable. */}
+                          <Chip
+                            tone={
+                              d.recoverable === true
+                                ? 'success'
+                                : d.recoverable === false
+                                  ? 'danger'
+                                  : 'neutral'
+                            }
+                          >
+                            {d.recoverable === true
+                              ? 'Yes'
+                              : d.recoverable === false
+                                ? 'No'
+                                : 'Unassessed'}
+                          </Chip>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </Card>
+
       {/* ---------------- task detail ---------------- */}
       <Modal
         open={!!task}
@@ -448,6 +611,116 @@ export default function Schedule() {
             </div>
           </div>
         ) : null}
+      </Modal>
+
+      {/* ---------------- flag a delay (PRD 5.4.4) ---------------- */}
+      <Modal
+        open={!!delayFor}
+        onClose={() => setDelayFor(null)}
+        title="Flag Delay"
+        description={delayFor ? `“${delayFor.name}” has overrun its baseline.` : ''}
+        size="sm"
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => setDelayFor(null)}
+              disabled={phaseBusy}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              form="flag-delay-form"
+              type="submit"
+              disabled={phaseBusy}
+            >
+              {phaseBusy ? 'Saving…' : 'Flag Delay'}
+            </Button>
+          </>
+        }
+      >
+        <form id="flag-delay-form" onSubmit={saveDelay} className="space-y-3.5">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="dl-days" className="eyebrow mb-1.5 block">
+                Days Lost
+              </label>
+              <input
+                id="dl-days"
+                type="number"
+                min="1"
+                required
+                value={delayForm.delayDays}
+                onChange={(e) =>
+                  setDelayForm((v) => ({ ...v, delayDays: e.target.value }))
+                }
+                disabled={phaseBusy}
+                className="focus-ring tnum h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+              />
+            </div>
+            <div>
+              <label htmlFor="dl-cost" className="eyebrow mb-1.5 block">
+                Cost Impact (₹)
+              </label>
+              <input
+                id="dl-cost"
+                type="number"
+                min="0"
+                value={delayForm.costImpact}
+                onChange={(e) =>
+                  setDelayForm((v) => ({ ...v, costImpact: e.target.value }))
+                }
+                disabled={phaseBusy}
+                className="focus-ring tnum h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="dl-cause" className="eyebrow mb-1.5 block">
+              Root Cause
+            </label>
+            <select
+              id="dl-cause"
+              value={delayForm.cause}
+              onChange={(e) =>
+                setDelayForm((v) => ({ ...v, cause: e.target.value }))
+              }
+              disabled={phaseBusy}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+            >
+              {DELAY_CAUSES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="dl-rec" className="eyebrow mb-1.5 block">
+              Recoverable in later phases?
+            </label>
+            <select
+              id="dl-rec"
+              value={delayForm.recoverable}
+              onChange={(e) =>
+                setDelayForm((v) => ({ ...v, recoverable: e.target.value }))
+              }
+              disabled={phaseBusy}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+            >
+              <option value="true">Yes — later phases can absorb it</option>
+              <option value="false">No — it pushes the completion date</option>
+            </select>
+          </div>
+
+          <p className="text-[11.5px] leading-relaxed text-ink-3">
+            Recalculating the forecast pushes this delay into every phase that
+            follows, with the monsoon buffer applied to weeks 22–36.
+          </p>
+        </form>
       </Modal>
 
       {/* ---------------- audit log ---------------- */}

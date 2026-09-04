@@ -86,6 +86,9 @@ export async function getSchedule(projectId) {
       cost: Number(row.cost) || 0,
       status: row.status,
       delayDays: row.delay_days ?? 0,
+      delayCause: row.delay_cause ?? null,
+      delayCostImpact: Number(row.delay_cost_impact) || 0,
+      delayRecoverable: row.delay_recoverable,
     })
   }
 
@@ -148,14 +151,32 @@ export const PHASE_ACTIONS = [
   { key: 'delayed', label: 'Flag as delayed' },
 ]
 
-export async function setPhaseStatus(phaseId, status, { delayDays } = {}) {
+export async function setPhaseStatus(
+  phaseId,
+  status,
+  { delayDays, cause, costImpact, recoverable } = {},
+) {
   requireConfigured()
 
   const patch = { status }
   /* Flagging a delay with no figure defaults to a week, which is the smallest
      unit the Gantt can actually show. */
-  if (status === 'delayed') patch.delay_days = delayDays ?? 7
-  if (status === 'done') patch.delay_days = 0
+  if (status === 'delayed') {
+    patch.delay_days = delayDays ?? 7
+    /* PRD 5.4.4 — the analysis fields. Only written when the caller supplied
+       them, so flagging a delay quickly does not blank a cause recorded
+       earlier. */
+    if (cause !== undefined) patch.delay_cause = cause || null
+    if (costImpact !== undefined) patch.delay_cost_impact = Math.round(Number(costImpact) || 0)
+    if (recoverable !== undefined) patch.delay_recoverable = recoverable
+  }
+  if (status === 'done') {
+    patch.delay_days = 0
+    /* A finished phase has no outstanding delay to analyse. */
+    patch.delay_cause = null
+    patch.delay_cost_impact = 0
+    patch.delay_recoverable = null
+  }
 
   return unwrap(
     await supabase
@@ -167,11 +188,74 @@ export async function setPhaseStatus(phaseId, status, { delayDays } = {}) {
   )
 }
 
+/** The root causes PRD 5.4.4 asks the system to attribute a delay to. */
+export const DELAY_CAUSES = [
+  'Monsoon',
+  'Material delay',
+  'Design change',
+  'Contractor capacity',
+  'Other',
+]
+
+/**
+ * Delay Analysis (PRD 5.4.4).
+ *
+ * "For each completed or active phase that has overrun its baseline, surface
+ * the root cause, weeks added, additional cost, and whether the delay is
+ * recoverable in subsequent phases."
+ *
+ * Recoverability is the PM's judgement and is stored; the rest is read off
+ * the phase. Totals are returned alongside because the useful question is
+ * usually "how far behind are we altogether", not phase by phase.
+ */
+export async function getDelayAnalysis(projectId) {
+  requireConfigured()
+  const rows = unwrap(
+    await supabase
+      .from('schedule_phases')
+      .select(
+        'id, name, sequence, status, delay_days, delay_cause, delay_cost_impact, delay_recoverable',
+      )
+      .eq('project_id', projectId)
+      .gt('delay_days', 0)
+      .order('sequence', { ascending: true }),
+  )
+
+  const phases = rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    status: r.status,
+    days: r.delay_days ?? 0,
+    /* One decimal: "1.4 weeks" is honest where "1 week" rounds away two days
+       of a schedule the PRD measures in weeks. */
+    weeks: Math.round(((r.delay_days ?? 0) / 7) * 10) / 10,
+    cause: r.delay_cause ?? 'Not recorded',
+    costImpact: Number(r.delay_cost_impact) || 0,
+    recoverable: r.delay_recoverable,
+  }))
+
+  return {
+    phases,
+    totalWeeks:
+      Math.round((phases.reduce((s, p) => s + p.days, 0) / 7) * 10) / 10,
+    totalCost: phases.reduce((s, p) => s + p.costImpact, 0),
+    /* Only counts a delay someone has actually judged recoverable — an
+       unrecorded one is unknown, not recoverable. */
+    recoverableWeeks:
+      Math.round(
+        (phases.filter((p) => p.recoverable === true).reduce((s, p) => s + p.days, 0) /
+          7) *
+          10,
+      ) / 10,
+  }
+}
+
 /**
  * Recalculates the forecast timeline (PRD 5.4.3).
  *
- * Rule-based only — cumulative delay pushed into later phases, plus the
- * documented monsoon buffer. No model involved.
+ * Rule-based only, and all three of the document's rules: cumulative delay
+ * pushed into later phases, the monsoon buffer for weeks 22-36, and rework
+ * days for every open high-severity alert. No model involved.
  */
 export async function applyForecast(projectId) {
   requireConfigured()

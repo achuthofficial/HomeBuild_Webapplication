@@ -315,6 +315,14 @@ create table if not exists public.schedule_phases (
   created_at         timestamptz not null default now()
 );
 
+-- PRD 5.4.4 Delay Analysis. delay_days already records how much a phase
+-- overran; these record why, what it cost, and whether later phases can
+-- absorb it — the three things the document asks the system to surface.
+alter table public.schedule_phases
+  add column if not exists delay_cause       text,
+  add column if not exists delay_cost_impact bigint default 0,
+  add column if not exists delay_recoverable boolean;
+
 create index if not exists schedule_phases_project_idx on public.schedule_phases(project_id);
 create unique index if not exists schedule_phases_sequence_idx
   on public.schedule_phases(project_id, sequence);
@@ -347,6 +355,58 @@ create table if not exists public.cost_categories (
 );
 
 create index if not exists cost_categories_project_idx on public.cost_categories(project_id);
+
+-- The rupee allocation behind the percentage. PRD 5.3.5 wants budget vs spent
+-- at category level, and a percentage alone cannot draw that bar.
+alter table public.cost_categories
+  add column if not exists budgeted bigint default 0;
+
+-- Sits here rather than beside the milestones table because cost_category_id
+-- references a table declared below it.
+-- PRD 5.3.3 gives every milestone a verification condition ("Concrete poured
+-- and cured 21 days, structural sign-off"). Storing it means the PM verifying
+-- a release reads the same criterion the customer agreed to.
+alter table public.milestones
+  add column if not exists verification_criteria text,
+  -- Which cost category the release is charged to, so the escrow payment
+  -- shows up in the category breakdown rather than beside it.
+  add column if not exists cost_category_id uuid references public.cost_categories(id) on delete set null,
+  -- customer_approved_at was doing double duty as the payment timestamp.
+  add column if not exists paid_at timestamptz;
+
+-- =============================================================================
+-- expenses  —  the spend ledger (PRD 5.3.5)
+--
+-- Category-level "budget vs spent" needs somewhere the spending actually
+-- lives. Without this table the only number in the system was the project
+-- rollup, which can tell you 42% is gone but not what it went on.
+--
+-- Every rupee that leaves has a row here, including escrow releases:
+-- advance_milestone() posts one when a milestone is paid, so the ledger is
+-- complete rather than being a second, parallel account of the money.
+-- =============================================================================
+create table if not exists public.expenses (
+  id           uuid primary key default gen_random_uuid(),
+  project_id   uuid not null references public.projects(id) on delete cascade,
+  category_id  uuid references public.cost_categories(id) on delete set null,
+  -- Set when this row IS an escrow release, so the two cannot double-count.
+  milestone_id uuid references public.milestones(id) on delete set null,
+  amount       bigint not null check (amount > 0),
+  incurred_on  date not null default current_date,
+  vendor       text,
+  note         text,
+  created_by   text references public.profiles(firebase_uid) on delete set null,
+  created_at   timestamptz not null default now()
+);
+
+create index if not exists expenses_project_idx on public.expenses(project_id);
+create index if not exists expenses_category_idx on public.expenses(category_id);
+create index if not exists expenses_incurred_idx on public.expenses(project_id, incurred_on);
+
+/* Partial unique index, so advance_milestone() can post its expense with
+   `on conflict do nothing` and a re-run cannot bill the release twice. */
+create unique index if not exists expenses_milestone_idx
+  on public.expenses(milestone_id) where milestone_id is not null;
 
 -- =============================================================================
 -- Aggregates
@@ -419,6 +479,7 @@ alter table public.contractor_assignments enable row level security;
 alter table public.schedule_phases       enable row level security;
 alter table public.budget_entries        enable row level security;
 alter table public.cost_categories       enable row level security;
+alter table public.expenses              enable row level security;
 
 -- Read: any signed-in user, on every table.
 do $$
@@ -582,11 +643,24 @@ begin
   from public.schedule_phases
   where project_id = p_project_id;
 
-  /* Consumed budget is what has actually been released. */
-  select coalesce(sum(release_amount), 0)
+  /* Consumed budget comes from the expense ledger, which is complete: a paid
+     milestone posts an expense, so escrow releases and direct spending are
+     counted once each in the same place.
+
+     The milestone fallback below is for projects whose milestones were paid
+     before the ledger existed — without it, upgrading would reset their
+     consumed figure to zero. */
+  select coalesce(sum(amount), 0)
   into v_consumed
-  from public.milestones
-  where project_id = p_project_id and status = 'paid';
+  from public.expenses
+  where project_id = p_project_id;
+
+  if v_consumed = 0 then
+    select coalesce(sum(release_amount), 0)
+    into v_consumed
+    from public.milestones
+    where project_id = p_project_id and status = 'paid';
+  end if;
 
   update public.projects
   set progress_pct    = least(100, greatest(0, coalesce(v_progress, 0))),
@@ -623,6 +697,11 @@ create trigger milestones_rollup
   after insert or update or delete on public.milestones
   for each row execute function public.trigger_recalc_rollups();
 
+drop trigger if exists expenses_rollup on public.expenses;
+create trigger expenses_rollup
+  after insert or update or delete on public.expenses
+  for each row execute function public.trigger_recalc_rollups();
+
 -- -----------------------------------------------------------------------------
 -- Milestone payment workflow (PRD 8.5)
 --
@@ -631,6 +710,44 @@ create trigger milestones_rollup
 -- approved before the PM verifies. Timestamps are stamped server-side so they
 -- cannot be back-dated.
 -- -----------------------------------------------------------------------------
+/* Posts the ledger line for a paid milestone.
+
+   Runs as definer so it can write the one kind of expense row the RLS policy
+   refuses to a member — an escrow line. It is safe to expose: it takes only a
+   milestone id, reads every value from that row, refuses a milestone that is
+   not actually paid, and still requires the caller to have access to the
+   project. The unique index on milestone_id makes a repeat call a no-op, so
+   the worst a caller can achieve is posting a line that was already owed. */
+create or replace function public.post_milestone_expense(p_milestone_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row public.milestones;
+begin
+  select * into v_row from public.milestones where id = p_milestone_id;
+  if not found or v_row.status <> 'paid' or coalesce(v_row.release_amount, 0) <= 0 then
+    return;
+  end if;
+  if not public.has_project_access(v_row.project_id) then
+    raise exception 'No access to this project';
+  end if;
+
+  insert into public.expenses (
+    project_id, category_id, milestone_id, amount, incurred_on, note, created_by
+  )
+  values (
+    v_row.project_id, v_row.cost_category_id, v_row.id, v_row.release_amount,
+    current_date,
+    format('Escrow release — %s (%s)', v_row.name, coalesce(v_row.payment_txn_id, 'pending')),
+    public.firebase_uid()
+  )
+  on conflict do nothing;
+end;
+$$;
+
 create or replace function public.advance_milestone(
   p_milestone_id uuid,
   p_next_status text
@@ -669,6 +786,8 @@ begin
         when p_next_status = 'approved' then now() else pm_verified_at end,
       customer_approved_at = case
         when p_next_status = 'paid' then now() else customer_approved_at end,
+      paid_at = case
+        when p_next_status = 'paid' then now() else paid_at end,
       payment_txn_id = case
         when p_next_status = 'paid'
         /* Stand-in for the escrow provider's reference until RazorpayX is
@@ -677,6 +796,15 @@ begin
         else payment_txn_id end
   where id = p_milestone_id
   returning * into v_row;
+
+  /* A release is money leaving, so it belongs in the ledger — otherwise the
+     category breakdown would silently omit the largest payments in the
+     project. Posted through a definer helper because the expense policy
+     deliberately forbids a member from writing a row with a milestone_id:
+     escrow lines must come from this workflow, not from a client. */
+  if p_next_status = 'paid' then
+    perform public.post_milestone_expense(v_row.id);
+  end if;
 
   insert into public.activity_log (project_id, actor_uid, entity, entity_id, action, summary)
   values (
@@ -755,10 +883,30 @@ declare
   v_row record;
   v_touched integer := 0;
   v_shift numeric;
+  v_alert_days numeric := 0;
 begin
   if v_uid is null then
     raise exception 'Not signed in';
   end if;
+
+  /* PRD 5.4.3: "each high-severity alert adds 3-7 days" of rework risk.
+
+     The document gives a range and no rule for picking inside it, so the
+     severity chooses: High takes the low end, Critical the high one. That is
+     a defensible reading rather than an arbitrary midpoint, and it means a
+     critical finding moves the forecast more than a merely high one.
+
+     Only OPEN alerts count. A resolved alert has already had its rework done
+     and shows up as real delay on the phase, so counting it here would charge
+     the schedule for the same problem twice. */
+  select coalesce(sum(case when severity = 'Critical' then 7 else 3 end), 0)
+  into v_alert_days
+  from public.ai_alerts
+  where project_id = p_project_id
+    and severity in ('High', 'Critical')
+    and status not in ('resolved', 'false_positive');
+
+  v_cumulative := v_alert_days / 7.0;
 
   for v_row in
     select * from public.schedule_phases
@@ -770,7 +918,12 @@ begin
       v_cumulative := v_cumulative + (v_row.delay_days / 7.0);
     end if;
 
-    if v_cumulative > 0 and v_row.status in ('queued','on_hold','in_progress') then
+    /* 'delayed' and 'critical' belong here too: the phase that is currently
+       overrunning is precisely the one whose finish date you want predicted.
+       Its own delay is already in v_cumulative by this point, so its forecast
+       bar ends later than its baseline, which is the honest picture. Only
+       'done' is excluded — a finished phase has an actual, not a forecast. */
+    if v_cumulative > 0 and v_row.status <> 'done' then
       v_shift := v_cumulative;
 
       /* PRD 5.4.3: monsoon weeks 22-36 carry a 15% buffer. */
@@ -790,8 +943,9 @@ begin
   insert into public.activity_log (project_id, actor_uid, entity, action, summary)
   values (
     p_project_id, v_uid, 'schedule', 'forecast_applied',
-    format('Forecast recalculated; %s phase(s) shifted by %s week(s)',
-           v_touched, round(v_cumulative, 1))
+    format('Forecast recalculated; %s phase(s) shifted by %s week(s) '
+           '(%s day(s) of that from open high-severity alerts)',
+           v_touched, round(v_cumulative, 1), v_alert_days)
   );
 
   return v_touched;
@@ -969,7 +1123,7 @@ declare t text;
 begin
   foreach t in array array[
     'floor_plans','site_updates','ai_alerts','milestones',
-    'schedule_phases','budget_entries','cost_categories',
+    'schedule_phases','budget_entries','cost_categories','expenses',
     'contractor_assignments'
   ]
   loop
@@ -986,6 +1140,15 @@ begin
 end $$;
 
 /* Writes on child tables, re-scoped from "any signed-in user". */
+/* Alerts are normally raised by the CV pipeline, which is out of scope for
+   this build. Without an insert policy the table was writable only by the
+   seed, which left PRD 5.4.3's "pending alerts add rework days" term
+   unreachable on a real project — and gave a PM no way to log a defect they
+   spotted on site themselves. Anyone on the project may raise one. */
+drop policy if exists "insert alert via project" on public.ai_alerts;
+create policy "insert alert via project" on public.ai_alerts
+  for insert with check (public.has_project_access(project_id));
+
 drop policy if exists "signed-in update alerts" on public.ai_alerts;
 drop policy if exists "update alerts via project" on public.ai_alerts;
 create policy "update alerts via project" on public.ai_alerts
@@ -1013,6 +1176,34 @@ drop policy if exists "signed-in insert phases" on public.schedule_phases;
 drop policy if exists "insert phases via project" on public.schedule_phases;
 create policy "insert phases via project" on public.schedule_phases
   for insert with check (public.has_project_access(project_id));
+
+/* Expenses: anyone on the project may record spending, and only the person
+   who recorded it may correct or remove it. Escrow releases are posted by
+   advance_milestone() as definer, so they are not affected by the insert
+   policy — and cannot be edited away by a member, which is the point of an
+   audit-ready ledger. */
+drop policy if exists "insert expense via project" on public.expenses;
+create policy "insert expense via project" on public.expenses
+  for insert with check (
+    created_by = public.firebase_uid()
+    and milestone_id is null
+    and public.has_project_access(project_id)
+  );
+
+drop policy if exists "update own expense" on public.expenses;
+create policy "update own expense" on public.expenses
+  for update using (created_by = public.firebase_uid() and milestone_id is null)
+  with check (created_by = public.firebase_uid() and milestone_id is null);
+
+drop policy if exists "delete own expense" on public.expenses;
+create policy "delete own expense" on public.expenses
+  for delete using (created_by = public.firebase_uid() and milestone_id is null);
+
+/* Categories are a project-level template; the manager tunes the allocation. */
+drop policy if exists "manager writes categories" on public.cost_categories;
+create policy "manager writes categories" on public.cost_categories
+  for all using (public.is_project_manager(project_id))
+  with check (public.is_project_manager(project_id));
 
 drop policy if exists "insert own site update" on public.site_updates;
 drop policy if exists "insert site update via project" on public.site_updates;
@@ -1079,6 +1270,156 @@ create policy "read activity via project" on public.activity_log
 -- and it always records the CREATOR as a member — you never lose the project
 -- you just made.
 -- =============================================================================
+-- -----------------------------------------------------------------------------
+-- Project templates (PRD 5.3.2, 5.3.3 and 5.4.2)
+--
+-- All three tables in the document are fixed: the same six cost categories,
+-- the same six escrow milestones and the same eleven construction phases
+-- apply to every project. So they are applied at creation rather than being
+-- something a PM has to type in before Finance and Schedule do anything.
+--
+-- 5.3.2 gives ranges (Civil "45-50%"). The single figures below are the only
+-- assignment inside every range that also sums to 100.
+--
+-- The phase template used to be seeded from the browser after the create call
+-- returned, in a try/catch that logged and continued. That meant a project
+-- could be created with no schedule at all and nothing would say so. Here it
+-- is part of the same transaction as the project row: either both exist or
+-- neither does.
+--
+-- Idempotent per section: it skips whichever of the three the project already
+-- has, so calling it twice is safe.
+-- -----------------------------------------------------------------------------
+create or replace function public.apply_project_templates(p_project_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_budget bigint;
+  v_start  date;
+  v_end    date;
+  v_span   integer;
+  v_cum    numeric := 0;
+  v_prev   bigint  := 0;
+  r        record;
+begin
+  select budget_total, start_date, expected_completion
+  into v_budget, v_start, v_end
+  from public.projects where id = p_project_id;
+
+  v_budget := coalesce(v_budget, 0);
+
+  -- 5.3.2 Cost Categories
+  if not exists (select 1 from public.cost_categories where project_id = p_project_id) then
+    /* Amounts are the DIFFERENCE BETWEEN CUMULATIVE ROUNDINGS, not each
+       percentage rounded on its own. Rounding independently leaves the six
+       rows summing to a rupee or two either side of the budget — invisible in
+       any single row, and wrong in the total the user actually checks. */
+    insert into public.cost_categories (project_id, label, pct, tone, sequence, budgeted)
+    with t(label, pct, tone, seq) as (values
+      ('Civil & Structural',      48.0, 'brand',   1),
+      ('Finishing & Interior',    20.0, 'success', 2),
+      ('Contingency',             10.0, 'neutral', 3),
+      ('Electrical Works',         9.0, 'warning', 4),
+      ('Plumbing & Sanitation',    7.0, 'info',    5),
+      ('Architect & Consultants',  6.0, 'danger',  6)
+    ),
+    c as (select *, sum(pct) over (order by seq) as cum from t)
+    select p_project_id, label, pct, tone, seq,
+           round(v_budget * cum / 100.0)
+           - round(v_budget * coalesce(lag(cum) over (order by seq), 0) / 100.0)
+    from c;
+  end if;
+
+  -- 5.3.3 Escrow Milestone Structure
+  if not exists (select 1 from public.milestones where project_id = p_project_id) then
+    /* Due dates are placed by cumulative release percentage across the
+       project's own dates, so the schedule stretches with the project instead
+       of inheriting the document's example calendar. */
+    v_span := case
+      when v_start is not null and v_end is not null and v_end > v_start
+      then v_end - v_start else null end;
+
+    for r in
+      select *, sum(pct) over (order by seq) as cum from (values
+        (1, 'Foundation Complete',      18.0, 'Sub-structure cast, PM site inspection passed'),
+        (2, 'Ground Floor Slab Cast',   22.0, 'Concrete poured and cured 21 days, structural sign-off'),
+        (3, 'First Floor Slab Cast',    20.0, 'Upper slab cast, all columns verified vertical'),
+        (4, 'Roof Slab Cast',           15.0, 'Final slab cast, water tank base ready'),
+        (5, 'Brick & Plaster Complete', 12.0, 'All walls plastered, openings finalized'),
+        (6, 'Final Handover',           13.0, 'Painting, flooring, MEP done, snag list cleared')
+      ) as t(seq, name, pct, criteria)
+      order by seq
+    loop
+      /* Same cumulative rounding as the categories, so the six releases add
+         to the budget exactly rather than to within a rupee of it. */
+      v_prev := round(v_budget * v_cum / 100.0);
+      v_cum  := r.cum;
+
+      insert into public.milestones (
+        project_id, sequence, name, release_pct, release_amount,
+        due_date, status, verification_criteria, cost_category_id
+      )
+      values (
+        p_project_id, r.seq, r.name, r.pct,
+        round(v_budget * v_cum / 100.0) - v_prev,
+        case when v_span is not null
+             then v_start + (v_span * v_cum / 100.0)::integer
+             else null end,
+        'upcoming',
+        r.criteria,
+        /* Every release before handover is structural or shell work; the
+           handover payment covers the finishing trades. */
+        (select id from public.cost_categories
+          where project_id = p_project_id
+            and label = case when r.seq = 6
+                             then 'Finishing & Interior'
+                             else 'Civil & Structural' end
+          limit 1)
+      );
+    end loop;
+  end if;
+
+  -- 5.4.2 Phase Structure
+  --
+  -- The document's 60-week calendar, scaled onto the 12-week window the Gantt
+  -- draws (week / 5). Costs are the document's proportions applied to this
+  -- project's actual budget, so a Rs 50L project does not inherit the
+  -- example's Rs 87L figures.
+  if not exists (select 1 from public.schedule_phases where project_id = p_project_id) then
+    insert into public.schedule_phases (
+      project_id, sequence, name, phase_group,
+      baseline_start_week, baseline_end_week, cost, status
+    )
+    with t(seq, name, grp, wstart, wend, lakh) as (values
+      ( 1, 'Site Preparation',       '1. Foundations',        0.0,  0.4,  2.5),
+      ( 2, 'Foundation',             '1. Foundations',        0.4,  1.6,  8.5),
+      ( 3, 'Ground Floor Structure', '2. Structural Framing', 1.6,  3.2, 14.0),
+      ( 4, 'First Floor Structure',  '2. Structural Framing', 3.2,  4.8, 14.0),
+      ( 5, 'Roof Slab',              '2. Structural Framing', 4.8,  6.0, 10.0),
+      ( 6, 'Brick & Block Work',     '3. MEP Installation',   6.0,  7.6,  7.0),
+      ( 7, 'Plastering',             '3. MEP Installation',   7.6,  8.8,  5.0),
+      ( 8, 'MEP Works',              '3. MEP Installation',   7.6,  9.2, 14.0),
+      ( 9, 'Flooring & Tiling',      '4. Interior Finishing', 8.8, 10.4,  6.0),
+      (10, 'Painting & Finishing',   '4. Interior Finishing',10.4, 11.6,  5.0),
+      (11, 'Final Handover',         '4. Interior Finishing',11.6, 12.0,  1.0)
+    ),
+    c as (select *, sum(lakh) over (order by seq) as cum from t)
+    select p_project_id, seq, name, grp, wstart, wend,
+           case when v_budget > 0
+                /* Cumulative rounding again, so the eleven phase costs add to
+                   the budget rather than to within a couple of rupees. */
+                then round(v_budget * cum / 87.0)
+                     - round(v_budget * coalesce(lag(cum) over (order by seq), 0) / 87.0)
+                else round(lakh * 100000) end,
+           'queued'
+    from c;
+  end if;
+end;
+$$;
+
 create or replace function public.create_project(p_project jsonb)
 returns public.projects
 language plpgsql
@@ -1140,6 +1481,15 @@ begin
   where uid is not null
     and exists (select 1 from public.profiles pr where pr.firebase_uid = m.uid)
   on conflict (project_id, member_uid) do nothing;
+
+  /* The PRD's default templates, applied at creation.
+
+     Without this a new project opened its Finance page to nothing at all: the
+     tables existed and the workflows worked, but there was no category
+     breakdown to spend against and no escrow schedule to release. Both are
+     fixed templates in the document, so there is nothing for the user to
+     decide before the project can be used. */
+  perform public.apply_project_templates(v_row.id);
 
   insert into public.activity_log (project_id, actor_uid, entity, entity_id, action, summary)
   values (v_row.id, v_uid, 'project', v_row.id, 'created',
@@ -1203,6 +1553,7 @@ $$;
 -- =============================================================================
 
 drop policy if exists "signed-in users read site photos" on storage.objects;
+drop policy if exists "read site photos via project" on storage.objects;
 create policy "read site photos via project"
 on storage.objects for select
 using (
@@ -1215,6 +1566,7 @@ using (
 );
 
 drop policy if exists "users upload their own site photos" on storage.objects;
+drop policy if exists "upload site photos via project" on storage.objects;
 create policy "upload site photos via project"
 on storage.objects for insert
 with check (
@@ -1229,6 +1581,7 @@ with check (
 );
 
 drop policy if exists "users delete their own site photos" on storage.objects;
+drop policy if exists "delete own site photos" on storage.objects;
 create policy "delete own site photos"
 on storage.objects for delete
 using (

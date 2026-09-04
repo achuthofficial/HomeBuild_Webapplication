@@ -10,6 +10,64 @@ import { supabase, unwrap, requireConfigured } from '@/api/client'
 
 export const ALERTS_PER_PAGE = 10
 
+/**
+ * PRD 5.2.3's quality-check vocabulary, with the severity the document
+ * assigns each one as the default.
+ *
+ * The CV model is meant to produce these. It is out of scope for this build,
+ * so they are also what a PM picks from when logging a defect by hand —
+ * without that, the alert table could only ever contain seed data and PRD
+ * 5.4.3's "open high-severity alerts add rework days" term would never fire
+ * on a real project.
+ */
+export const CV_CATEGORIES = [
+  { label: 'Reinforcement Spacing', severity: 'High' },
+  { label: 'Concrete Curing', severity: 'High' },
+  { label: 'Formwork Alignment', severity: 'High' },
+  { label: 'Safety Compliance', severity: 'High' },
+  { label: 'Brickwork Bonding', severity: 'Medium' },
+  { label: 'Plaster Quality', severity: 'Medium' },
+  { label: 'Material Storage', severity: 'Low' },
+  { label: 'Site Cleanliness', severity: 'Low' },
+]
+
+export const SEVERITIES = ['Low', 'Medium', 'High', 'Critical']
+
+/**
+ * Logs an alert a person spotted rather than the model.
+ *
+ * `confidence` is left null on purpose. It is the CV model's score, and
+ * putting 1.0 there for a human observation would make a judgement look like
+ * a measurement.
+ */
+export async function raiseAlert({
+  projectId,
+  category,
+  severity,
+  description,
+  locationText,
+}) {
+  requireConfigured()
+
+  const { data, error } = await supabase
+    .from('ai_alerts')
+    .insert({
+      project_id: projectId,
+      category,
+      severity,
+      description: description?.trim() || null,
+      location_text: locationText?.trim() || null,
+      status: 'new',
+    })
+    .select('id, severity')
+    .single()
+
+  if (error?.code === '42501') {
+    throw new Error('You do not have permission to raise an alert on this project.')
+  }
+  return unwrap({ data, error })
+}
+
 /* PRD 8.4's full severity vocabulary. `High` was missing here, so an alert
    the CV pipeline marked High could be stored but never filtered for. */
 export const severityFilters = ['All Levels', 'Critical', 'High', 'Medium', 'Low']

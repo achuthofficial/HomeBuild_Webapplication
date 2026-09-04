@@ -16,6 +16,7 @@ import { downloadCsv } from '@/lib/csv'
 import { listActivity } from '@/api/activity'
 import { rupees, longDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
+import { useAuth } from '@/context/AuthContext'
 import { useQuery } from '@/hooks/useQuery'
 import { Wallet, Banknote, PiggyBank } from 'lucide-react'
 import {
@@ -27,6 +28,8 @@ import {
   getFinanceSummary,
   getBudgetTrend,
   getCostCategories,
+  listExpenseCategories,
+  recordExpense,
   listMilestones,
 } from '@/api/finance'
 
@@ -107,6 +110,7 @@ function FinanceKpi({ label, value, delta, note, icon: Icon, iconTone }) {
 
 export default function Finance() {
   const { toast } = useToast()
+  const { authUser } = useAuth()
   const [range, setRange] = useState(trendRanges[0])
   const [invoiceOpen, setInvoiceOpen] = useState(false)
   const [menuFor, setMenuFor] = useState(null)
@@ -114,6 +118,19 @@ export default function Finance() {
   const [raising, setRaising] = useState(false)
   const [ledgerOpen, setLedgerOpen] = useState(false)
   const [invoiceError, setInvoiceError] = useState(null)
+  /* Declared up here with the rest of the state, not beside the modal it
+     drives: the categories query below reads it, and a `const` referenced
+     before its declaration is a temporal dead zone error, not a warning. */
+  const [expenseOpen, setExpenseOpen] = useState(false)
+  const [expenseError, setExpenseError] = useState(null)
+  const [savingExpense, setSavingExpense] = useState(false)
+  const [expense, setExpense] = useState({
+    categoryId: '',
+    amount: '',
+    incurredOn: new Date().toISOString().slice(0, 10),
+    vendor: '',
+    note: '',
+  })
   const [invoice, setInvoice] = useState({
     name: '',
     amount: '',
@@ -146,6 +163,17 @@ export default function Finance() {
     [projectId],
     { enabled: Boolean(projectId) },
   )
+
+  /* getCostCategories returns the categories plus any spending that names no
+     category, so unpack rather than treating the result as a bare list. */
+  const categoryList = categories.data?.categories ?? []
+  const uncategorisedSpend = categories.data?.uncategorised ?? 0
+
+  const expenseCategories = useQuery(
+    () => listExpenseCategories(projectId),
+    [projectId],
+    { enabled: Boolean(projectId) && expenseOpen },
+  )
   const contractorOptions = useQuery(() => listContractorOptions(), [], {
     enabled: invoiceOpen,
   })
@@ -162,6 +190,49 @@ export default function Finance() {
    * The transition rules live in the database, so an illegal move comes back
    * as an error rather than being silently allowed — this just surfaces it.
    */
+  /**
+   * Records spending against a category (PRD 5.3.5).
+   *
+   * Escrow releases are not created here — they post themselves when a
+   * milestone is paid. This is the other half: the material purchases and
+   * fees that never pass through the escrow chain but still spend the budget.
+   */
+  const saveExpense = async (e) => {
+    e.preventDefault()
+    setExpenseError(null)
+    setSavingExpense(true)
+
+    try {
+      await recordExpense({
+        projectId,
+        categoryId: expense.categoryId,
+        amount: expense.amount,
+        incurredOn: expense.incurredOn,
+        vendor: expense.vendor,
+        note: expense.note,
+        actorUid: authUser?.uid,
+      })
+      setExpenseOpen(false)
+      setExpense({
+        categoryId: '',
+        amount: '',
+        incurredOn: new Date().toISOString().slice(0, 10),
+        vendor: '',
+        note: '',
+      })
+      toast('Spending recorded.')
+      /* Three things move: the category bar, the trend, and the KPI the
+         database recalculated when the row landed. */
+      categories.refetch()
+      trend.refetch()
+      summary.refetch()
+    } catch (error) {
+      setExpenseError(error.message)
+    } finally {
+      setSavingExpense(false)
+    }
+  }
+
   const raiseInvoice = async (e) => {
     e.preventDefault()
     setInvoiceError(null)
@@ -266,7 +337,10 @@ export default function Finance() {
         </div>
       </QueryBoundary>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+      {/* items-start: the category card grew a bar list under its donut, and
+          stretching the trend card to match left a tall empty panel beside
+          it. Each card keeps its own height instead. */}
+      <div className="mt-4 grid items-start gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <Card className="p-5">
           <CardHeader
             title="Budget Consumption Trend"
@@ -298,7 +372,20 @@ export default function Finance() {
         </Card>
 
         <Card className="p-5">
-          <CardHeader title="Category Breakdown" />
+          <CardHeader
+            title="Category Breakdown"
+            action={
+              projectId ? (
+                <button
+                  type="button"
+                  onClick={() => setExpenseOpen(true)}
+                  className="focus-ring rounded text-[12px] font-semibold text-brand-ink hover:underline"
+                >
+                  Record spending
+                </button>
+              ) : null
+            }
+          />
           <div className="mt-5">
             {projectQuery.isLoading || categories.isLoading ? (
               <Skeleton className="mx-auto h-[156px] w-[156px] rounded-full" />
@@ -306,12 +393,60 @@ export default function Finance() {
               <p className="py-10 text-center text-[13px] text-danger">
                 {projectQuery.error ?? categories.error}
               </p>
-            ) : (categories.data?.length ?? 0) === 0 ? (
+            ) : categoryList.length === 0 ? (
               <p className="py-10 text-center text-[13px] text-ink-2">
                 No cost categories recorded.
               </p>
             ) : (
-              <DonutChart data={categories.data} />
+              <>
+                <DonutChart data={categoryList} />
+
+                {/* PRD 5.3.5: budget vs spent at category level, with bars.
+                    The donut alone only ever showed the PLAN — how the budget
+                    was divided up, never how much of each slice had gone. */}
+                <ul className="mt-5 space-y-3 border-t border-line pt-4">
+                  {categoryList.map((c) => (
+                    <li key={c.id ?? c.label}>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <p className="truncate text-[12.5px] font-medium text-ink">
+                          {c.label}
+                        </p>
+                        <p className="tnum shrink-0 text-[12px] text-ink-2">
+                          {rupees(c.spent)}
+                          <span className="text-ink-4"> / {rupees(c.budgeted)}</span>
+                        </p>
+                      </div>
+                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-canvas">
+                        <div
+                          className={cn(
+                            'h-full rounded-full transition-[width]',
+                            c.over ? 'bg-danger' : 'bg-brand',
+                          )}
+                          /* Bar is clamped so it cannot spill out of its
+                             track; the number beside it still reads over
+                             100%, so an overrun is visible either way. */
+                          style={{ width: `${Math.min(100, c.usedPct)}%` }}
+                        />
+                      </div>
+                      <p
+                        className={cn(
+                          'mt-1 text-[11px] font-semibold',
+                          c.over ? 'text-danger' : 'text-ink-4',
+                        )}
+                      >
+                        {c.usedPct}% used{c.over ? ' — over budget' : ''}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+
+                {uncategorisedSpend > 0 ? (
+                  <p className="mt-3 text-[11.5px] text-ink-2">
+                    {rupees(uncategorisedSpend)} of spending is not assigned to a
+                    category, so it appears in the total but in none of the bars.
+                  </p>
+                ) : null}
+              </>
             )}
           </div>
         </Card>
@@ -497,6 +632,128 @@ export default function Finance() {
             Raised milestones enter <strong>pending verification</strong>. The
             release percentage is derived from the amount against the project
             budget.
+          </p>
+        </form>
+      </Modal>
+
+      {/* ---------------- record spending (PRD 5.3.5) ---------------- */}
+      <Modal
+        open={expenseOpen}
+        onClose={() => setExpenseOpen(false)}
+        title="Record Spending"
+        description="Spending outside the escrow chain — materials, fees, hire."
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => setExpenseOpen(false)}
+              disabled={savingExpense}
+            >
+              Cancel
+            </Button>
+            <Button form="record-expense-form" type="submit" disabled={savingExpense}>
+              {savingExpense ? 'Saving…' : 'Record'}
+            </Button>
+          </>
+        }
+      >
+        <form id="record-expense-form" onSubmit={saveExpense} className="space-y-3.5">
+          <FormMessage>{expenseError}</FormMessage>
+
+          <div>
+            <label htmlFor="ex-cat" className="eyebrow mb-1.5 block">
+              Category
+            </label>
+            <select
+              id="ex-cat"
+              required
+              value={expense.categoryId}
+              onChange={(e) =>
+                setExpense((v) => ({ ...v, categoryId: e.target.value }))
+              }
+              disabled={savingExpense || expenseCategories.isLoading}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+            >
+              <option value="">
+                {expenseCategories.isLoading ? 'Loading…' : 'Choose a category'}
+              </option>
+              {(expenseCategories.data ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="ex-amt" className="eyebrow mb-1.5 block">
+                Amount (₹)
+              </label>
+              <input
+                id="ex-amt"
+                type="number"
+                min="1"
+                required
+                value={expense.amount}
+                onChange={(e) =>
+                  setExpense((v) => ({ ...v, amount: e.target.value }))
+                }
+                disabled={savingExpense}
+                className="focus-ring tnum h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+              />
+            </div>
+            <div>
+              <label htmlFor="ex-date" className="eyebrow mb-1.5 block">
+                Date
+              </label>
+              <input
+                id="ex-date"
+                type="date"
+                required
+                value={expense.incurredOn}
+                onChange={(e) =>
+                  setExpense((v) => ({ ...v, incurredOn: e.target.value }))
+                }
+                disabled={savingExpense}
+                className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="ex-vendor" className="eyebrow mb-1.5 block">
+              Vendor
+            </label>
+            <input
+              id="ex-vendor"
+              value={expense.vendor}
+              onChange={(e) =>
+                setExpense((v) => ({ ...v, vendor: e.target.value }))
+              }
+              disabled={savingExpense}
+              placeholder="Sri Lakshmi Electricals"
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="ex-note" className="eyebrow mb-1.5 block">
+              Note
+            </label>
+            <input
+              id="ex-note"
+              value={expense.note}
+              onChange={(e) => setExpense((v) => ({ ...v, note: e.target.value }))}
+              disabled={savingExpense}
+              placeholder="Conduit and wiring, ground floor"
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+            />
+          </div>
+
+          <p className="text-[11.5px] leading-relaxed text-ink-3">
+            Escrow releases are not recorded here — paying a milestone posts its
+            own ledger line automatically, so the two can never double-count.
           </p>
         </form>
       </Modal>

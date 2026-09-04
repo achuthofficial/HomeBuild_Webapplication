@@ -46,9 +46,46 @@ export async function getFinanceSummary(projectId) {
   }
 }
 
-/** Monthly spend series for the area chart. */
+/**
+ * Monthly spend series for the area chart.
+ *
+ * Built from the expense ledger, so it moves when money actually moves. It
+ * used to read `budget_entries`, which nothing in the app ever wrote — the
+ * chart was permanently empty on any real project and only ever showed the
+ * seeded demo data. That table is still the fallback, so those demo projects
+ * keep their history.
+ */
 export async function getBudgetTrend(projectId, months = 8) {
   requireConfigured()
+
+  const expenses = unwrap(
+    await supabase
+      .from('expenses')
+      .select('incurred_on, amount')
+      .eq('project_id', projectId)
+      .order('incurred_on', { ascending: false }),
+  )
+
+  if (expenses.length) {
+    /* Bucket by month, newest first, then take the window the chart draws. */
+    const buckets = new Map()
+    for (const e of expenses) {
+      const d = new Date(e.incurred_on)
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      buckets.set(key, (buckets.get(key) ?? 0) + (Number(e.amount) || 0))
+    }
+    return [...buckets.entries()]
+      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+      .slice(0, months)
+      .reverse()
+      .map(([key, value]) => ({
+        month: new Date(`${key}-01T00:00:00`)
+          .toLocaleDateString('en-US', { month: 'short' })
+          .toUpperCase(),
+        value,
+      }))
+  }
+
   const rows = unwrap(
     await supabase
       .from('budget_entries')
@@ -70,20 +107,144 @@ export async function getBudgetTrend(projectId, months = 8) {
     }))
 }
 
+/**
+ * Cost categories with what has actually been spent against each — PRD 5.3.5's
+ * first acceptance criterion, "budget vs spent visible at category level with
+ * progress bars".
+ *
+ * `value` stays the planned percentage so the donut is unchanged; `budgeted`
+ * and `spent` are what the bars need. Spend is summed from the ledger here
+ * rather than kept as a column on the category, so it cannot drift from the
+ * expenses it is supposed to total.
+ */
 export async function getCostCategories(projectId) {
   requireConfigured()
-  const rows = unwrap(
+
+  const [rows, expenses] = await Promise.all([
+    supabase
+      .from('cost_categories')
+      .select('id, label, pct, tone, sequence, budgeted')
+      .eq('project_id', projectId)
+      .order('sequence', { ascending: true })
+      .then(unwrap),
+    supabase
+      .from('expenses')
+      .select('category_id, amount')
+      .eq('project_id', projectId)
+      .then(unwrap),
+  ])
+
+  const spentByCategory = new Map()
+  let uncategorised = 0
+  for (const e of expenses) {
+    const amount = Number(e.amount) || 0
+    if (!e.category_id) uncategorised += amount
+    else
+      spentByCategory.set(
+        e.category_id,
+        (spentByCategory.get(e.category_id) ?? 0) + amount,
+      )
+  }
+
+  return {
+    /* Spending that names no category is reported rather than dropped —
+       silently losing it would make the bars disagree with the KPI. */
+    uncategorised,
+    categories: rows.map((r) => {
+      const budgeted = Number(r.budgeted) || 0
+      const spent = spentByCategory.get(r.id) ?? 0
+      return {
+        id: r.id,
+        label: r.label,
+        value: Number(r.pct),
+        tone: r.tone ?? 'brand',
+        budgeted,
+        spent,
+        /* Uncapped on purpose: an overrun should read as over 100%, not as a
+           full bar that looks the same as spending exactly to plan. */
+        usedPct: budgeted ? Math.round((spent / budgeted) * 100) : 0,
+        over: budgeted > 0 && spent > budgeted,
+      }
+    }),
+  }
+}
+
+/** Options for the "record spending" dialog. */
+export async function listExpenseCategories(projectId) {
+  requireConfigured()
+  return unwrap(
     await supabase
       .from('cost_categories')
-      .select('label, pct, tone, sequence')
+      .select('id, label')
       .eq('project_id', projectId)
       .order('sequence', { ascending: true }),
   )
+}
+
+/** The ledger behind the category bars and the trend chart. */
+export async function listExpenses(projectId, limit = 40) {
+  requireConfigured()
+  const rows = unwrap(
+    await supabase
+      .from('expenses')
+      .select(
+        'id, amount, incurred_on, vendor, note, milestone_id, cost_categories ( label )',
+      )
+      .eq('project_id', projectId)
+      .order('incurred_on', { ascending: false })
+      .limit(limit),
+  )
+
   return rows.map((r) => ({
-    label: r.label,
-    value: Number(r.pct),
-    tone: r.tone ?? 'brand',
+    id: r.id,
+    amount: Number(r.amount) || 0,
+    date: r.incurred_on,
+    vendor: r.vendor ?? '—',
+    note: r.note ?? '',
+    category: r.cost_categories?.label ?? 'Uncategorised',
+    /* Escrow lines are posted by the payment workflow and are not editable. */
+    isEscrow: Boolean(r.milestone_id),
   }))
+}
+
+/**
+ * Records spending outside the escrow chain — a material purchase, a
+ * consultant's fee. Escrow releases post themselves when a milestone is paid,
+ * so this deliberately cannot create one: the database refuses a row that
+ * claims a milestone.
+ */
+export async function recordExpense({
+  projectId,
+  categoryId,
+  amount,
+  incurredOn,
+  vendor,
+  note,
+  actorUid,
+}) {
+  requireConfigured()
+
+  const value = Math.round(Number(amount) || 0)
+  if (value <= 0) throw new Error('Enter an amount greater than zero.')
+
+  const { data, error } = await supabase
+    .from('expenses')
+    .insert({
+      project_id: projectId,
+      category_id: categoryId || null,
+      amount: value,
+      incurred_on: incurredOn || new Date().toISOString().slice(0, 10),
+      vendor: vendor?.trim() || null,
+      note: note?.trim() || null,
+      created_by: actorUid,
+    })
+    .select('id')
+    .single()
+
+  if (error?.code === '42501') {
+    throw new Error('You do not have permission to record spending on this project.')
+  }
+  return unwrap({ data, error })
 }
 
 export async function listMilestones(projectId) {

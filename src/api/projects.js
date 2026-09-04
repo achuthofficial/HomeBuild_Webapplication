@@ -126,7 +126,6 @@ export async function createProject({
   bhkPerFloor,
   startDate,
   expectedCompletion,
-  seedPhases = true,
 }) {
   requireConfigured()
 
@@ -134,7 +133,13 @@ export async function createProject({
      The insert policy requires manager_uid = the caller, which would block
      assigning the project to a different PM — and would let a creator hand a
      project away and lose access to it in the same statement. The function
-     runs as definer and always records the creator as a member. */
+     runs as definer and always records the creator as a member.
+
+     It also applies the PRD's default templates — cost categories (5.3.2),
+     escrow milestones (5.3.3) and the 60-week phase structure (5.4.2) — in
+     the same transaction. The phase template used to be seeded from here,
+     after the call returned, inside a try/catch that logged and carried on;
+     a project could end up with no schedule and nothing would say so. */
   const rows = unwrap(
     await supabase.rpc('create_project', {
       p_project: {
@@ -160,16 +165,6 @@ export async function createProject({
   )
 
   const created = Array.isArray(rows) ? rows[0] : rows
-
-  if (seedPhases && created?.id) {
-    /* Non-fatal: a project without phases is still usable, and failing the
-       whole creation over the template would be worse than an empty Gantt. */
-    try {
-      await seedDefaultPhases(created.id, budget ? Number(budget) : 0)
-    } catch (error) {
-      console.error('[projects] could not seed default phases', error)
-    }
-  }
 
   /* The function returns the raw row; re-read through the normal select so
      the caller gets the same shape as every other project. */
@@ -245,45 +240,6 @@ export async function removeProjectMember(projectId, memberUid) {
   }
   unwrap({ data: null, error })
   return { memberUid }
-}
-
-/**
- * The 60-week template from PRD 5.4.2, compressed onto the 12-week window the
- * Gantt draws. Costs are the PRD's proportions applied to the actual budget,
- * so a ₹50L project does not inherit the document's ₹87L example figures.
- */
-const PHASE_TEMPLATE = [
-  ['Site Preparation',      '1. Foundations',           0.0,  0.4,  2.5],
-  ['Foundation',            '1. Foundations',           0.4,  1.6,  8.5],
-  ['Ground Floor Structure','2. Structural Framing',    1.6,  3.2, 14.0],
-  ['First Floor Structure', '2. Structural Framing',    3.2,  4.8, 14.0],
-  ['Roof Slab',             '2. Structural Framing',    4.8,  6.0, 10.0],
-  ['Brick & Block Work',    '3. MEP Installation',      6.0,  7.6,  7.0],
-  ['Plastering',            '3. MEP Installation',      7.6,  8.8,  5.0],
-  ['MEP Works',             '3. MEP Installation',      7.6,  9.2, 14.0],
-  ['Flooring & Tiling',     '4. Interior Finishing',    8.8, 10.4,  6.0],
-  ['Painting & Finishing',  '4. Interior Finishing',   10.4, 11.6,  5.0],
-  ['Final Handover',        '4. Interior Finishing',   11.6, 12.0,  1.0],
-]
-
-/** Template costs total ₹91L in the PRD; used to scale to the real budget. */
-const TEMPLATE_TOTAL_LAKH = PHASE_TEMPLATE.reduce((sum, p) => sum + p[4], 0)
-
-async function seedDefaultPhases(projectId, budgetTotal) {
-  const rows = PHASE_TEMPLATE.map(([name, group, start, end, lakh], i) => ({
-    project_id: projectId,
-    sequence: i + 1,
-    name,
-    phase_group: group,
-    baseline_start_week: start,
-    baseline_end_week: end,
-    cost: budgetTotal
-      ? Math.round((lakh / TEMPLATE_TOTAL_LAKH) * budgetTotal)
-      : Math.round(lakh * 100000),
-    status: 'queued',
-  }))
-
-  return unwrap(await supabase.from('schedule_phases').insert(rows).select('id'))
 }
 
 /**

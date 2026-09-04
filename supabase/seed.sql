@@ -216,13 +216,42 @@ insert into public.budget_entries (project_id, period, amount) values
   ('11111111-1111-4111-8111-000000000001','2026-08-01',5720000)
 on conflict (project_id, period) do update set amount = excluded.amount;
 
--- Category breakdown. NOTE: these percentages are normalised to 100 here,
--- unlike the original mockup whose figures summed to 108.
-insert into public.cost_categories (project_id, label, pct, tone, sequence) values
-  ('11111111-1111-4111-8111-000000000001','Construction Materials', 42, 'success', 1),
-  ('11111111-1111-4111-8111-000000000001','Labor & Subcontracting', 35, 'brand',   2),
-  ('11111111-1111-4111-8111-000000000001','Permits & Legal',        23, 'warning', 3)
-on conflict do nothing;
+-- Category breakdown.
+--
+-- The seed used to invent its own three categories (Construction Materials /
+-- Labor / Permits), which are not the PRD's. Every project now gets the 5.3.2
+-- template from apply_project_templates, so the demo data and a real project
+-- show the same six lines. The function fills only what a project is missing,
+-- so the milestones and phases seeded above are left exactly as they are.
+delete from public.cost_categories
+where label in ('Construction Materials','Labor & Subcontracting','Permits & Legal');
+
+do $$
+declare p record;
+begin
+  for p in select id from public.projects loop
+    perform public.apply_project_templates(p.id);
+  end loop;
+end $$;
+
+-- A little spending, so the category bars and the trend have something real to
+-- draw on the demo project rather than sitting at zero.
+insert into public.expenses (project_id, category_id, amount, incurred_on, vendor, note)
+select '11111111-1111-4111-8111-000000000001', c.id, e.amount, e.on_date, e.vendor, e.note
+from (values
+  ('Civil & Structural',      2850000, date '2026-06-12', 'Sharma Constructions',  'RMC and steel, ground floor slab'),
+  ('Civil & Structural',      1240000, date '2026-07-08', 'Sharma Constructions',  'Blockwork, levels 1-2'),
+  ('Electrical Works',         410000, date '2026-07-22', 'Sri Lakshmi Electricals','Conduit runs and DB'),
+  ('Plumbing & Sanitation',    295000, date '2026-08-04', 'Kaveri Plumbing',       'CPVC lines and fixtures'),
+  ('Architect & Consultants',  180000, date '2026-08-19', 'Rekha Gupta Associates','Structural review, stage 3')
+) as e(label, amount, on_date, vendor, note)
+join public.cost_categories c
+  on c.project_id = '11111111-1111-4111-8111-000000000001' and c.label = e.label
+where not exists (
+  -- Only fill on a fresh database.
+  select 1 from public.expenses
+  where project_id = '11111111-1111-4111-8111-000000000001'
+);
 
 -- -----------------------------------------------------------------------------
 -- Site updates + AI alerts
@@ -301,4 +330,5 @@ select
   (select count(*) from public.contractors)  as contractors,
   (select count(*) from public.ai_alerts)    as alerts,
   (select count(*) from public.milestones)   as milestones,
-  (select count(*) from public.schedule_phases) as phases;
+  (select count(*) from public.schedule_phases) as phases,
+  (select count(*) from public.expenses)     as expenses;

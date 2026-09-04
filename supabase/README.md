@@ -18,9 +18,14 @@ only generates on a fresh database rather than doubling each time.
 The last statement in `seed.sql` prints a count. Expect:
 
 ```
- projects | contractors | alerts | milestones | phases
-       12 |           6 |    128 |          5 |      9
+ projects | contractors | alerts | milestones | phases | expenses
+       12 |           6 |    128 |         65 |    130 |        5
 ```
+
+The milestone and phase counts are higher than they used to be because the
+seed now applies the PRD's default templates to *every* demo project, not just
+the first. Before, opening any project but Sky Villa 42 showed an empty
+Finance page and an empty Gantt.
 
 ## Prerequisite: the Firebase bridge
 
@@ -47,7 +52,9 @@ The five entities from PRD section 8, plus what the interface needs:
 | `profiles` | §4 personas | Settings, team lists, avatars |
 | `contractors` | goal 4 | Contractor Management |
 | `schedule_phases` | 5.4.2 | Gantt, list and board views |
-| `budget_entries`, `cost_categories` | — | Trend chart, category donut |
+| `expenses` | 5.3.5 | The spend ledger — category bars, trend chart, consumption KPI |
+| `cost_categories` | 5.3.2 | Category budget-vs-spent bars and the donut |
+| `budget_entries` | — | Legacy monthly series; only a fallback for demo projects |
 | `invitations` | §4 personas | Team invites on Settings |
 | `activity_log` | audit fields | Audit log, payment ledger |
 
@@ -83,9 +90,10 @@ this records which are collected in the UI and which are set by the system.
 **8.3 Site Update** — all 9 fields present, including the optional Milestone
 Reference. Supervisor and Uploaded At are set by the system rather than typed.
 
-**8.5 Milestone** — all 10 fields present. Release Percentage is *derived*
-from the amount against the project budget rather than entered, so the two
-cannot disagree. PM verification, customer approval and the transaction id are
+**8.5 Milestone** — all 10 fields present, including the Verification Criteria
+from 5.3.3, so the PM verifying a release reads the same condition the customer
+agreed to. Release Percentage is *derived* from the amount against the project
+budget rather than entered, so the two cannot disagree. PM verification, customer approval and the transaction id are
 stamped server-side by `advance_milestone`.
 
 ### Two places the implementation differs from the document, on purpose
@@ -98,17 +106,67 @@ equivalent live as you type, so the PRD's unit is still what you read.
 **Selected Plan lives on the plan, not the project.** See the note in
 `schema.sql` — one home for the fact, rather than two that can disagree.
 
+## Every project starts with the PRD's templates
+
+`create_project()` calls `apply_project_templates()` in the same transaction,
+which applies all three fixed tables from the document:
+
+- **5.3.2** — the six cost categories, at 48 / 20 / 10 / 9 / 7 / 6 %. The
+  document gives ranges; those are the only figures inside every range that
+  also sum to 100.
+- **5.3.3** — the six escrow milestones with their release percentages and
+  verification criteria, due-dated across the project's own start and finish.
+- **5.4.2** — the eleven-phase, 60-week construction schedule, scaled onto the
+  12-week window the Gantt draws, with each phase's cost taken as the
+  document's proportion of *this* project's budget.
+
+Two details worth knowing:
+
+**Amounts are cumulative-rounded.** Rounding each percentage on its own leaves
+the rows summing to a rupee or two either side of the budget — invisible in any
+one row and wrong in the total. Each amount is the difference between
+successive cumulative roundings, so all three tables add to the budget exactly.
+
+**The phase template used to run in the browser**, after `create_project`
+returned, inside a `try/catch` that logged the failure and carried on. A
+project could be created with no schedule at all and nothing would say so.
+
+## The spend ledger
+
+`expenses` is where money leaving the project is recorded, and it is the
+single source for three things that used to disagree or sit empty:
+
+- the **category bars** (PRD 5.3.5's first acceptance criterion — budget vs
+  spent per category, which the donut alone never showed: it only ever drew
+  the *plan*),
+- the **budget consumption trend**, which read `budget_entries` — a table
+  nothing in the app ever wrote, so the chart was permanently empty on any
+  real project,
+- the project's **`budget_consumed`**, recalculated by trigger.
+
+Paying a milestone posts its own ledger line, so escrow releases and direct
+spending are counted once each in the same place rather than tracked
+separately. That line is written by `post_milestone_expense()`, a
+`SECURITY DEFINER` helper, because the RLS policy deliberately forbids a member
+from inserting a row that claims a milestone — escrow lines must come from the
+payment workflow, not from a client.
+
 ## Workflow rules live in SQL, not the client
 
-Three functions enforce the parts that must not be bypassed by a client bug:
+Four functions enforce the parts that must not be bypassed by a client bug:
 
 - **`advance_milestone`** — the PRD 8.5 payment chain. A milestone cannot be
   paid before the customer approves, nor approved before the PM verifies.
   Timestamps and the payment reference are stamped server-side.
 - **`resolve_alert`** — the PRD 8.4 alert workflow, with its own audit entry.
-- **`apply_schedule_forecast`** — the rule-based part of PRD 5.4.3: cumulative
-  delay pushed into later phases, plus the documented monsoon buffer for
-  weeks 22–36. No model involved.
+- **`apply_schedule_forecast`** — the rule-based part of PRD 5.4.3, and now
+  all three of its rules: cumulative delay pushed into later phases, the
+  monsoon buffer for weeks 22–36, and rework days for every open high-severity
+  alert. The document says "3–7 days" without saying how to choose inside the
+  range, so the severity chooses — High takes 3, Critical takes 7. Resolved
+  alerts are excluded: their rework already shows as real delay on the phase,
+  and counting them here would charge the schedule twice.
+- **`post_milestone_expense`** — posts the ledger line for a paid milestone.
 
 Two triggers keep derived figures honest. Changing a phase's status or paying
 a milestone recalculates the project's `progress_pct` and `budget_consumed`,
