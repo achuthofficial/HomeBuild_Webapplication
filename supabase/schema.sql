@@ -56,6 +56,40 @@ create table if not exists public.profiles (
   updated_at    timestamptz not null default now()
 );
 
+-- =============================================================================
+-- Column reconciliation
+--
+-- `create table if not exists` does nothing to a table that already exists, so
+-- on any database that is not empty, every statement below the table
+-- definitions runs against whatever shape that table happens to have. Since
+-- re-running this file is the documented upgrade path, and it had only ever
+-- been tested against an EMPTY database, the first index or function naming a
+-- column the existing table lacked failed the whole script — reported in the
+-- wild as `ERROR: 42703: column "city" does not exist`.
+--
+-- These statements make the file converge to the current schema from any
+-- starting point. Each is a no-op where the column is already present.
+--
+-- Two deliberate weakenings, because ALTER on a populated table is stricter
+-- than CREATE on an empty one:
+--   · NOT NULL is dropped where the column has no default — Postgres cannot
+--     add such a column to a table that already has rows.
+--   · A foreign key is kept only when its target table is declared earlier in
+--     this file; a forward reference would fail at that point.
+-- A fresh install still gets the full constraints from CREATE TABLE, so this
+-- only ever relaxes what a REPAIRED database carries.
+-- =============================================================================
+
+alter table public.profiles
+  add column if not exists full_name text,
+  add column if not exists email text,
+  add column if not exists phone text,
+  add column if not exists job_title text default 'Project Manager',
+  add column if not exists role text not null default 'project_manager' check (role in ('customer', 'project_manager', 'site_supervisor')),
+  add column if not exists avatar_url text,
+  add column if not exists created_at timestamptz not null default now(),
+  add column if not exists updated_at timestamptz not null default now();
+
 drop trigger if exists profiles_touch on public.profiles;
 create trigger profiles_touch before update on public.profiles
   for each row execute function public.touch_updated_at();
@@ -99,6 +133,32 @@ create table if not exists public.projects (
   updated_at          timestamptz not null default now()
 );
 
+alter table public.projects
+  add column if not exists name text,
+  add column if not exists client_name text,
+  add column if not exists customer_uid text references public.profiles(firebase_uid) on delete set null,
+  add column if not exists manager_uid text references public.profiles(firebase_uid) on delete set null,
+  add column if not exists status text not null default 'active' check (status in ('lead','in_design','active','paused','completed','cancelled')),
+  add column if not exists city text,
+  add column if not exists plot_address text,
+  add column if not exists plot_lat numeric(9,6),
+  add column if not exists plot_lng numeric(9,6),
+  add column if not exists plot_length_ft integer,
+  add column if not exists plot_width_ft integer,
+  add column if not exists plot_facing text check (plot_facing in ('North','South','East','West')),
+  add column if not exists total_floors text check (total_floors in ('G','G+1','G+2','G+3')),
+  add column if not exists bhk_per_floor integer check (bhk_per_floor between 1 and 4),
+  add column if not exists budget_total bigint default 0,
+  add column if not exists budget_consumed bigint default 0,
+  add column if not exists progress_pct integer default 0 check (progress_pct between 0 and 100),
+  add column if not exists budget_status text default 'on_budget' check (budget_status in ('on_budget','review_required','over_budget')),
+  add column if not exists timeline_status text default 'on_track' check (timeline_status in ('on_track','ahead','delayed','at_risk')),
+  add column if not exists start_date date,
+  add column if not exists expected_completion date,
+  add column if not exists actual_completion date,
+  add column if not exists created_at timestamptz not null default now(),
+  add column if not exists updated_at timestamptz not null default now();
+
 create index if not exists projects_status_idx on public.projects(status);
 create index if not exists projects_city_idx on public.projects(city);
 create index if not exists projects_manager_idx on public.projects(manager_uid);
@@ -114,6 +174,11 @@ create table if not exists public.project_members (
   role        text default 'member',
   primary key (project_id, member_uid)
 );
+
+alter table public.project_members
+  add column if not exists project_id uuid references public.projects(id) on delete cascade,
+  add column if not exists member_uid text references public.profiles(firebase_uid) on delete cascade,
+  add column if not exists role text default 'member';
 
 -- =============================================================================
 -- floor_plans  (PRD 8.2)
@@ -144,6 +209,22 @@ create table if not exists public.floor_plans (
   created_at      timestamptz not null default now()
 );
 
+alter table public.floor_plans
+  add column if not exists project_id uuid references public.projects(id) on delete cascade,
+  add column if not exists variant text check (variant in ('A','B','C')),
+  add column if not exists name text,
+  add column if not exists vastu_score numeric(3,1) check (vastu_score between 0 and 10),
+  add column if not exists efficiency_score numeric(3,1) check (efficiency_score between 0 and 10),
+  add column if not exists total_sqft integer,
+  add column if not exists cost_per_sqft integer,
+  add column if not exists total_cost bigint,
+  add column if not exists highlights text[],
+  add column if not exists vastu_notes text,
+  add column if not exists room_layout jsonb,
+  add column if not exists ai_metadata jsonb,
+  add column if not exists is_selected boolean not null default false,
+  add column if not exists created_at timestamptz not null default now();
+
 create index if not exists floor_plans_project_idx on public.floor_plans(project_id);
 
 -- =============================================================================
@@ -164,6 +245,17 @@ create table if not exists public.site_updates (
   uploaded_at      timestamptz not null default now(),
   created_at       timestamptz not null default now()
 );
+
+alter table public.site_updates
+  add column if not exists project_id uuid references public.projects(id) on delete cascade,
+  add column if not exists supervisor_uid text references public.profiles(firebase_uid) on delete set null,
+  add column if not exists work_category text,
+  add column if not exists location_on_site text,
+  add column if not exists notes text,
+  add column if not exists status text not null default 'in_progress' check (status in ('in_progress','done','blocked')),
+  add column if not exists milestone_id uuid,
+  add column if not exists uploaded_at timestamptz not null default now(),
+  add column if not exists created_at timestamptz not null default now();
 
 -- PRD 5.2.5 optional metadata. Workers present and materials used were the
 -- two fields from that list with nowhere to go, so the upload form could not
@@ -207,6 +299,13 @@ create table if not exists public.site_update_photos (
   created_at     timestamptz not null default now()
 );
 
+alter table public.site_update_photos
+  add column if not exists site_update_id uuid references public.site_updates(id) on delete cascade,
+  add column if not exists storage_path text,
+  add column if not exists caption text,
+  add column if not exists uploaded_by text references public.profiles(firebase_uid) on delete set null,
+  add column if not exists created_at timestamptz not null default now();
+
 create index if not exists site_update_photos_update_idx
   on public.site_update_photos(site_update_id);
 
@@ -231,6 +330,22 @@ create table if not exists public.ai_alerts (
   resolution_photo  text,
   created_at        timestamptz not null default now()
 );
+
+alter table public.ai_alerts
+  add column if not exists project_id uuid references public.projects(id) on delete cascade,
+  add column if not exists source_update_id uuid references public.site_updates(id) on delete set null,
+  add column if not exists category text,
+  add column if not exists severity text check (severity in ('Low','Medium','High','Critical')),
+  add column if not exists confidence numeric(4,3) check (confidence between 0 and 1),
+  add column if not exists description text,
+  add column if not exists location_text text,
+  add column if not exists location_in_photo jsonb,
+  add column if not exists status text not null default 'new' check (status in ('new','acknowledged','assigned','resolved','false_positive')),
+  add column if not exists assigned_to text references public.profiles(firebase_uid) on delete set null,
+  add column if not exists detected_at timestamptz not null default now(),
+  add column if not exists resolved_at timestamptz,
+  add column if not exists resolution_photo text,
+  add column if not exists created_at timestamptz not null default now();
 
 create index if not exists ai_alerts_project_idx on public.ai_alerts(project_id);
 create index if not exists ai_alerts_status_idx on public.ai_alerts(status);
@@ -257,6 +372,21 @@ create table if not exists public.milestones (
   created_at        timestamptz not null default now(),
   updated_at        timestamptz not null default now()
 );
+
+alter table public.milestones
+  add column if not exists project_id uuid references public.projects(id) on delete cascade,
+  add column if not exists sequence integer,
+  add column if not exists name text,
+  add column if not exists contractor_id uuid,
+  add column if not exists release_pct numeric(5,2),
+  add column if not exists release_amount bigint,
+  add column if not exists due_date date,
+  add column if not exists status text not null default 'upcoming' check (status in ('upcoming','pending_verification','approved','paid')),
+  add column if not exists pm_verified_at timestamptz,
+  add column if not exists customer_approved_at timestamptz,
+  add column if not exists payment_txn_id text,
+  add column if not exists created_at timestamptz not null default now(),
+  add column if not exists updated_at timestamptz not null default now();
 
 create index if not exists milestones_project_idx on public.milestones(project_id);
 create unique index if not exists milestones_sequence_idx
@@ -289,11 +419,27 @@ create table if not exists public.contractors (
   created_at     timestamptz not null default now()
 );
 
+alter table public.contractors
+  add column if not exists code text unique,
+  add column if not exists name text,
+  add column if not exists initials text,
+  add column if not exists trade text,
+  add column if not exists rating numeric(2,1) check (rating between 0 and 5),
+  add column if not exists score integer check (score between 0 and 100),
+  add column if not exists kind text not null default 'sub' check (kind in ('internal','sub')),
+  add column if not exists score_history integer[],
+  add column if not exists compliance_ok boolean default true,
+  add column if not exists created_at timestamptz not null default now();
+
 create table if not exists public.contractor_assignments (
   contractor_id uuid not null references public.contractors(id) on delete cascade,
   project_id    uuid not null references public.projects(id) on delete cascade,
   primary key (contractor_id, project_id)
 );
+
+alter table public.contractor_assignments
+  add column if not exists contractor_id uuid references public.contractors(id) on delete cascade,
+  add column if not exists project_id uuid references public.projects(id) on delete cascade;
 
 -- Milestones reference contractors; added after both tables exist.
 alter table public.milestones
@@ -342,6 +488,22 @@ create table if not exists public.schedule_phases (
   created_at         timestamptz not null default now()
 );
 
+alter table public.schedule_phases
+  add column if not exists project_id uuid references public.projects(id) on delete cascade,
+  add column if not exists sequence integer,
+  add column if not exists name text,
+  add column if not exists phase_group text,
+  add column if not exists baseline_start_week numeric(5,2),
+  add column if not exists baseline_end_week numeric(5,2),
+  add column if not exists actual_start_week numeric(5,2),
+  add column if not exists actual_end_week numeric(5,2),
+  add column if not exists forecast_start_week numeric(5,2),
+  add column if not exists forecast_end_week numeric(5,2),
+  add column if not exists cost bigint,
+  add column if not exists status text default 'queued' check (status in ('done','in_progress','critical','delayed','queued','on_hold')),
+  add column if not exists delay_days integer default 0,
+  add column if not exists created_at timestamptz not null default now();
+
 -- PRD 5.4.4 Delay Analysis. delay_days already records how much a phase
 -- overran; these record why, what it cost, and whether later phases can
 -- absorb it — the three things the document asks the system to surface.
@@ -367,6 +529,12 @@ create table if not exists public.budget_entries (
   created_at  timestamptz not null default now()
 );
 
+alter table public.budget_entries
+  add column if not exists project_id uuid references public.projects(id) on delete cascade,
+  add column if not exists period date,
+  add column if not exists amount bigint not null default 0,
+  add column if not exists created_at timestamptz not null default now();
+
 create unique index if not exists budget_entries_period_idx
   on public.budget_entries(project_id, period);
 
@@ -380,6 +548,14 @@ create table if not exists public.cost_categories (
   sequence    integer default 0,
   created_at  timestamptz not null default now()
 );
+
+alter table public.cost_categories
+  add column if not exists project_id uuid references public.projects(id) on delete cascade,
+  add column if not exists label text,
+  add column if not exists pct numeric(5,2),
+  add column if not exists tone text default 'brand',
+  add column if not exists sequence integer default 0,
+  add column if not exists created_at timestamptz not null default now();
 
 create index if not exists cost_categories_project_idx on public.cost_categories(project_id);
 
@@ -432,6 +608,17 @@ create table if not exists public.expenses (
   created_by   text references public.profiles(firebase_uid) on delete set null,
   created_at   timestamptz not null default now()
 );
+
+alter table public.expenses
+  add column if not exists project_id uuid references public.projects(id) on delete cascade,
+  add column if not exists category_id uuid references public.cost_categories(id) on delete set null,
+  add column if not exists milestone_id uuid references public.milestones(id) on delete set null,
+  add column if not exists amount bigint check (amount > 0),
+  add column if not exists incurred_on date not null default current_date,
+  add column if not exists vendor text,
+  add column if not exists note text,
+  add column if not exists created_by text references public.profiles(firebase_uid) on delete set null,
+  add column if not exists created_at timestamptz not null default now();
 
 create index if not exists expenses_project_idx on public.expenses(project_id);
 create index if not exists expenses_category_idx on public.expenses(category_id);
@@ -619,6 +806,17 @@ create table if not exists public.invitations (
   created_at   timestamptz not null default now()
 );
 
+alter table public.invitations
+  add column if not exists email text,
+  add column if not exists role text not null default 'project_manager' check (role in ('customer','project_manager','site_supervisor')),
+  add column if not exists project_id uuid references public.projects(id) on delete cascade,
+  add column if not exists invited_by text references public.profiles(firebase_uid) on delete set null,
+  add column if not exists status text not null default 'pending' check (status in ('pending','accepted','revoked','expired')),
+  add column if not exists token uuid not null default gen_random_uuid(),
+  add column if not exists expires_at timestamptz not null default (now() + interval '7 days'),
+  add column if not exists accepted_at timestamptz,
+  add column if not exists created_at timestamptz not null default now();
+
 create unique index if not exists invitations_pending_email_idx
   on public.invitations(lower(email))
   where status = 'pending';
@@ -641,6 +839,16 @@ create table if not exists public.activity_log (
   detail      jsonb,
   created_at  timestamptz not null default now()
 );
+
+alter table public.activity_log
+  add column if not exists project_id uuid references public.projects(id) on delete cascade,
+  add column if not exists actor_uid text references public.profiles(firebase_uid) on delete set null,
+  add column if not exists entity text,
+  add column if not exists entity_id uuid,
+  add column if not exists action text,
+  add column if not exists summary text,
+  add column if not exists detail jsonb,
+  add column if not exists created_at timestamptz not null default now();
 
 create index if not exists activity_log_project_idx
   on public.activity_log(project_id, created_at desc);
