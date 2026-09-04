@@ -81,7 +81,12 @@ export default function Construction() {
   /* Photos now come back with the feed itself — they are rows in
      site_update_photos, signed in one batch, rather than being inferred from
      storage prefixes. */
-  const feed = useQuery(() => listFeedEntries({ category: filter }), [filter])
+  /* PRD 5.2.6 gives the customer view 60 seconds to show a new update. A
+     45-second refresh clears that with room for the request itself, and only
+     runs while the tab is visible. */
+  const feed = useQuery(() => listFeedEntries({ category: filter }), [filter], {
+    refreshMs: 45000,
+  })
 
   /* The rail beside the feed. Both used to be constants in a data file. */
   const findings = useQuery(() => listOpenFindings(null, 3), [])

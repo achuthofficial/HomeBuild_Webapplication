@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from 'react-router-dom'
+import { createBrowserRouter } from 'react-router-dom'
 
 import AppLayout from '@/layouts/AppLayout'
 import AuthLayout from '@/layouts/AuthLayout'
@@ -12,6 +12,8 @@ import ResetPassword from '@/pages/ResetPassword'
 import AuthAction from '@/pages/AuthAction'
 import Privacy from '@/pages/Privacy'
 
+import Landing from '@/router/Landing'
+import Compass from '@/pages/Compass'
 import Dashboard from '@/pages/Dashboard'
 import Design from '@/pages/Design'
 import Projects from '@/pages/Projects'
@@ -36,7 +38,7 @@ export const router = createBrowserRouter([
     path: '/',
     errorElement: <RootError />,
     children: [
-      { index: true, element: <Navigate to="/dashboard" replace /> },
+      { index: true, element: <Landing /> },
 
       /* ---------------------------------------------------- unauthenticated
          AuthLayout bounces signed-in visitors out of these, except for the
@@ -67,6 +69,7 @@ export const router = createBrowserRouter([
           </ProtectedRoute>
         ),
         children: [
+          { path: 'home', element: <Compass /> },
           { path: 'dashboard', element: <Dashboard /> },
           { path: 'projects', element: <Projects /> },
           { path: 'design', element: <Design /> },

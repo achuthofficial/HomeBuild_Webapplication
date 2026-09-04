@@ -446,7 +446,7 @@ export default function Finance() {
                         <div
                           className={cn(
                             'h-full rounded-full transition-[width]',
-                            c.over ? 'bg-danger' : 'bg-brand',
+                            c.over ? 'bg-danger' : 'bg-brand-600',
                           )}
                           /* Bar is clamped so it cannot spill out of its
                              track; the number beside it still reads over

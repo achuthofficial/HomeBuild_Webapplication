@@ -14,10 +14,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  *   · A mounted guard, so navigating away during a fetch does not setState on
  *     an unmounted component.
  *   · `refetch`, for after a mutation.
+ *   · `refreshMs`, for the screens with a freshness requirement.
  *
  * `fetcher` must be stable or memoised — it is invoked whenever `deps` change.
  */
-export function useQuery(fetcher, deps = [], { enabled = true } = {}) {
+export function useQuery(
+  fetcher,
+  deps = [],
+  { enabled = true, refreshMs = 0 } = {},
+) {
   const [state, setState] = useState({
     data: null,
     error: null,
@@ -35,14 +40,22 @@ export function useQuery(fetcher, deps = [], { enabled = true } = {}) {
     }
   }, [])
 
-  const run = useCallback(async () => {
+  /**
+   * `silent` skips the loading flag, for the background refresh below.
+   * Without it a 45-second poll would replace the feed with skeletons every
+   * 45 seconds — a screen that flickers on its own is worse than one that is
+   * slightly stale.
+   */
+  const run = useCallback(async ({ silent = false } = {}) => {
     if (!enabled) {
       setState({ data: null, error: null, isLoading: false })
       return
     }
 
     const id = ++requestId.current
-    setState((prev) => ({ ...prev, isLoading: true, error: null }))
+    if (!silent) {
+      setState((prev) => ({ ...prev, isLoading: true, error: null }))
+    }
 
     try {
       const data = await fetcher()
@@ -51,6 +64,10 @@ export function useQuery(fetcher, deps = [], { enabled = true } = {}) {
     } catch (error) {
       if (!mounted.current || id !== requestId.current) return
       console.error('[query] failed', error)
+      /* A failed background poll keeps whatever is on screen. Replacing a
+         working feed with an error because one refresh missed — on a site
+         connection that drops constantly — would be the wrong trade. */
+      if (silent) return
       setState({
         data: null,
         error: error?.message ?? 'Something went wrong loading this data.',
@@ -74,5 +91,43 @@ export function useQuery(fetcher, deps = [], { enabled = true } = {}) {
     run()
   }, [run])
 
-  return { ...state, refetch: run }
+  /**
+   * Background refresh, for PRD 5.2.6: "site feed updates appear in customer
+   * view within 60 seconds of upload".
+   *
+   * Two things keep this from being wasteful. It only runs while the tab is
+   * VISIBLE, so a dashboard left open in a background tab costs nothing; and
+   * it fires immediately on becoming visible again, so returning to the tab
+   * shows current data rather than whatever was there when you left.
+   */
+  const silentRun = useRef(run)
+  /* Updated in an effect, not during render: writing a ref while rendering is
+     the pattern React explicitly warns against, and the interval below only
+     reads it after a render has committed anyway. */
+  useEffect(() => {
+    silentRun.current = run
+  }, [run])
+
+  useEffect(() => {
+    if (!refreshMs || !enabled) return undefined
+
+    const tick = () => {
+      if (document.visibilityState === 'visible') {
+        silentRun.current({ silent: true })
+      }
+    }
+
+    const timer = setInterval(tick, refreshMs)
+    document.addEventListener('visibilitychange', tick)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', tick)
+    }
+  }, [refreshMs, enabled])
+
+  /* Wrapped so a call site can pass it straight to onClick without the click
+     event arriving as the options argument. */
+  const refetch = useCallback(() => run(), [run])
+
+  return { ...state, refetch }
 }
