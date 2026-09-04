@@ -32,7 +32,6 @@ import { longDate } from '@/lib/format'
 import { FormMessage } from '@/components/auth/AuthForm'
 import { uploadAvatar } from '@/lib/storage'
 import { isStorageConfigured } from '@/lib/supabaseStorage'
-import { onAvatarError } from '@/lib/imageFallback'
 
 const themes = [
   { id: 'light', label: 'Light Mode', icon: Sun },

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Camera, Plus, TriangleAlert, ArrowRight } from 'lucide-react'
 
 import { Link } from 'react-router-dom'

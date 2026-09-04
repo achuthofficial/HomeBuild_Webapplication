@@ -31,7 +31,6 @@ export default function DonutChart({
   const circumference = 2 * Math.PI * radius
   const total = data.reduce((sum, d) => sum + d.value, 0) || 1
 
-  let offset = 0
 
   return (
     <div className={cn('flex flex-col items-center', className)}>
@@ -54,11 +53,16 @@ export default function DonutChart({
             stroke="var(--color-muted)"
             strokeWidth={thickness}
           />
-          {data.map((segment) => {
+          {data.map((segment, i) => {
             const fraction = segment.value / total
             const dash = fraction * circumference
-            const dashOffset = -offset * circumference
-            offset += fraction
+            /* Cumulative start of this arc, summed from the segments before
+               it. This used to mutate a `let offset` while mapping — an
+               accumulator carried across a render, which breaks the moment
+               React memoises or re-orders any part of it. */
+            const startFraction =
+              data.slice(0, i).reduce((sum, s) => sum + s.value, 0) / total
+            const dashOffset = -startFraction * circumference
             const isActive = active === segment.label
 
             return (

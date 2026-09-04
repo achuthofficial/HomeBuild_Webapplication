@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { MoreVertical, Star } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'

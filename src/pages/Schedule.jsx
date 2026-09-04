@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { FileDown, ListFilter, TrendingUp, TriangleAlert, Users, Zap } from 'lucide-react'
+import { FileDown, TrendingUp, TriangleAlert, Users, Zap } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
 import Card, { CardHeader } from '@/components/ui/Card'

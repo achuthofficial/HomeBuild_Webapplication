@@ -57,9 +57,17 @@ export function useQuery(fetcher, deps = [], { enabled = true } = {}) {
         isLoading: false,
       })
     }
-    // fetcher is intentionally excluded: callers pass inline arrow functions,
-    // and `deps` is the declared cache key.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Two suppressions, both deliberate:
+    //
+    // `fetcher` is excluded because callers pass inline arrow functions, which
+    // are a new reference every render; `deps` is the declared cache key and
+    // is what should drive a refetch.
+    //
+    // The spread is what `react-hooks/use-memo` objects to — it cannot verify
+    // a dependency list it has to evaluate. Spreading a caller-supplied key
+    // into the array is the whole design of this hook, and the alternative
+    // (serialising deps to a string) would make object keys silently unequal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/use-memo
   }, [enabled, ...deps])
 
   useEffect(() => {
