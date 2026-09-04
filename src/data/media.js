@@ -16,6 +16,10 @@
    string map and nothing else in the app has to change. */
 const IMAGES = '/images'
 
+/* Kept in step with the same list in scripts/fetch-images.mjs — the dev-mode
+   warning below is the thing that tells you they have drifted. */
+const AVATAR_IDS = [12, 13, 33, 45, 52, 60]
+
 export const media = {
   /** Sign-in hero: modern house at dusk with a pool. */
   authHero: `${IMAGES}/auth-hero.jpg`,
