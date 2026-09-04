@@ -3,14 +3,42 @@
 Every screen in HomeBuild now reads from Supabase. Authentication stays with
 Firebase — Supabase holds the data and the files.
 
-## Run these two files
+## Which files to run
 
-In the Supabase dashboard, open **SQL Editor** and run, in order:
+In the Supabase dashboard, open **SQL Editor**.
 
-1. **`schema.sql`** — tables, indexes, the `dashboard_kpis()` aggregate, and
-   Row Level Security policies.
-2. **`seed.sql`** — dummy data matching what the UI used to show: 12 projects,
-   6 contractors, 128 alerts, milestones, schedule phases and spend history.
+### Starting clean — the fast path
+
+If the data in this database is expendable (a prototype, or anything that came
+from `seed.sql` in the first place), rebuild rather than repair:
+
+```
+1. reset.sql    -- DELETES every HomeBuild table and its rows
+2. schema.sql
+3. seed.sql
+```
+
+`reset.sql` does not touch **uploaded files** — storage buckets and their
+objects are left alone, so avatars and site photos survive — and it does not
+touch **Firebase**, so no account, password or sign-in provider is affected.
+
+### Keeping the data — the in-place path
+
+```
+1. schema.sql   -- repairs an existing database, then brings it up to date
+2. seed.sql     -- optional; demo data only
+```
+
+`schema.sql` reconciles missing columns, key columns, column types, missing
+defaults and duplicate rows, and tells you what it changed. Use this once the
+database holds anything real. If it hits a shape it cannot repair, it says
+which table and column rather than failing obscurely — and `reset.sql` is the
+fallback.
+
+**What each file is:** `schema.sql` — tables, indexes, the `dashboard_kpis()`
+aggregate, workflow functions and Row Level Security. `seed.sql` — demo data:
+12 projects, 6 contractors, 128 alerts, milestones, schedule phases and spend
+history.
 
 Both are safe to re-run. The seed upserts on stable ids, and the alert filler
 only generates on a fresh database rather than doubling each time.

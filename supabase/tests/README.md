@@ -19,6 +19,8 @@ leaves a database `create_project()` cannot use has not actually succeeded.
 ./supabase/tests/upgrade-hard-cases.sh  # wrong column types, extra NOT NULL,
                                         # duplicates, view name collisions,
                                         # stale policies
+./supabase/tests/reset-rebuild.sh       # the clean-slate path: reset.sql +
+                                        # schema.sql + seed.sql from any shape
 ```
 
 Both must print `failed: 0`. Add a case here for any upgrade failure reported
