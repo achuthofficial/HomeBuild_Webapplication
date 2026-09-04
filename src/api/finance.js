@@ -252,20 +252,40 @@ export async function listMilestones(projectId) {
   const rows = unwrap(
     await supabase
       .from('milestones')
-      .select('id, sequence, name, release_amount, due_date, status, contractors ( name )')
+      .select(
+        'id, sequence, name, release_amount, release_pct, due_date, status, ' +
+          'verification_criteria, payment_txn_id, pm_verified_at, ' +
+          'customer_approved_at, paid_at, second_approval_at, contractors ( name )',
+      )
       .eq('project_id', projectId)
       .order('sequence', { ascending: true }),
   )
 
-  return rows.map((r) => ({
-    id: r.id,
-    milestone: r.name,
-    contractor: r.contractors?.name ?? 'Unassigned',
-    dueDate: r.due_date,
-    amount: Number(r.release_amount) || 0,
-    status: STATUS_LABELS[r.status] ?? STATUS_LABELS.upcoming,
-    statusKey: r.status,
-  }))
+  return rows.map((r) => {
+    const amount = Number(r.release_amount) || 0
+    return {
+      id: r.id,
+      milestone: r.name,
+      contractor: r.contractors?.name ?? 'Unassigned',
+      dueDate: r.due_date,
+      amount,
+      status: STATUS_LABELS[r.status] ?? STATUS_LABELS.upcoming,
+      statusKey: r.status,
+      releasePct: r.release_pct ? Number(r.release_pct) : null,
+      criteria: r.verification_criteria,
+      txnId: r.payment_txn_id,
+      pmVerifiedAt: r.pm_verified_at,
+      customerApprovedAt: r.customer_approved_at,
+      paidAt: r.paid_at,
+      /* PRD 5.3.4's threshold, mirrored here so the table can show the extra
+         step before the database refuses the payment. The database is still
+         the authority — this only decides what the UI offers. */
+      needsSecondApproval: amount > DUAL_APPROVAL_THRESHOLD,
+      secondApprovedAt: r.second_approval_at,
+      /* Reference is a stand-in until an escrow provider is connected. */
+      simulated: String(r.payment_txn_id ?? '').startsWith('SIM-'),
+    }
+  })
 }
 
 /**
@@ -276,6 +296,25 @@ export async function listMilestones(projectId) {
  * client that tries gets an error rather than a silent skip. Timestamps and
  * the payment reference are stamped server-side so they cannot be back-dated.
  */
+/** PRD 5.3.4: releases above this need a second, different approver. */
+export const DUAL_APPROVAL_THRESHOLD = 500000
+
+/**
+ * Records the second sign-off (PRD 5.3.4).
+ *
+ * The database refuses it from the person who verified the milestone, so
+ * "dual approval" cannot be satisfied by one account clicking twice.
+ */
+export async function secondApproveMilestone(milestoneId) {
+  requireConfigured()
+  const rows = unwrap(
+    await supabase.rpc('second_approve_milestone', {
+      p_milestone_id: milestoneId,
+    }),
+  )
+  return Array.isArray(rows) ? rows[0] : rows
+}
+
 export const MILESTONE_ACTIONS = {
   upcoming: { next: 'pending_verification', label: 'Submit for Verification' },
   pending_verification: { next: 'approved', label: 'Verify & Approve' },

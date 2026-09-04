@@ -170,7 +170,27 @@ create table if not exists public.site_updates (
 -- ask for them.
 alter table public.site_updates
   add column if not exists workers_present integer,
-  add column if not exists materials_used  text;
+  add column if not exists materials_used  text,
+  -- Idempotency key for offline capture (PRD 5.2.5).
+  --
+  -- The offline queue is at-least-once by nature: it sends, then deletes the
+  -- local copy. Close the tab in between — or lose signal again — and the
+  -- next flush resends. Observed in testing: a reload timed between the two
+  -- posted the same update twice.
+  --
+  -- The client mints this when it queues, so a retry carries the same value
+  -- and the unique index below turns the duplicate into a no-op.
+  add column if not exists client_token text;
+
+-- Deliberately NOT a partial index. `where client_token is not null` would
+-- read more precisely, but Postgres can only infer a partial index as an ON
+-- CONFLICT target if the statement repeats the predicate — and PostgREST's
+-- upsert does not, so the retry would fail with "no unique or exclusion
+-- constraint matching" instead of collapsing. A plain unique index does the
+-- right thing anyway: NULLs are distinct in a unique index, so the many
+-- updates posted while online never collide with each other.
+create unique index if not exists site_updates_client_token_idx
+  on public.site_updates(client_token);
 
 create index if not exists site_updates_project_idx on public.site_updates(project_id);
 create index if not exists site_updates_uploaded_idx on public.site_updates(uploaded_at desc);
@@ -375,6 +395,13 @@ alter table public.cost_categories
 -- a release reads the same criterion the customer agreed to.
 alter table public.milestones
   add column if not exists verification_criteria text,
+  -- PRD 5.3.4: "PM digital sign-off + customer dual-approval for releases
+  -- >Rs 5L". Recording WHO signed off is what makes the second approval mean
+  -- anything — otherwise one person could satisfy both.
+  add column if not exists pm_verified_by       text references public.profiles(firebase_uid) on delete set null,
+  add column if not exists customer_approved_by text references public.profiles(firebase_uid) on delete set null,
+  add column if not exists second_approval_at   timestamptz,
+  add column if not exists second_approver_uid  text references public.profiles(firebase_uid) on delete set null,
   -- Which cost category the release is charged to, so the escrow payment
   -- shows up in the category breakdown rather than beside it.
   add column if not exists cost_category_id uuid references public.cost_categories(id) on delete set null,
@@ -717,6 +744,60 @@ create trigger expenses_rollup
 -- approved before the PM verifies. Timestamps are stamped server-side so they
 -- cannot be back-dated.
 -- -----------------------------------------------------------------------------
+/* PRD 5.3.4's dual-approval threshold, as a function rather than a literal
+   scattered through the file: it is a policy number, and policy numbers move. */
+create or replace function public.dual_approval_threshold()
+returns bigint language sql immutable as $$ select 500000::bigint $$;
+
+/* Records the second sign-off PRD 5.3.4 requires above that threshold.
+
+   Deliberately refuses the person who already verified the milestone. "Dual
+   approval" that one account can satisfy twice is a log entry, not a control.
+*/
+create or replace function public.second_approve_milestone(p_milestone_id uuid)
+returns public.milestones
+language plpgsql
+security invoker
+as $$
+declare
+  v_row public.milestones;
+  v_uid text := public.firebase_uid();
+begin
+  if v_uid is null then
+    raise exception 'Not signed in';
+  end if;
+
+  select * into v_row from public.milestones where id = p_milestone_id;
+  if not found then
+    raise exception 'Milestone not found';
+  end if;
+
+  if v_row.status <> 'approved' then
+    raise exception 'Only an approved milestone can take a second approval';
+  end if;
+
+  if coalesce(v_row.release_amount, 0) <= public.dual_approval_threshold() then
+    raise exception 'This release does not require a second approval';
+  end if;
+
+  if v_row.pm_verified_by is not null and v_row.pm_verified_by = v_uid then
+    raise exception 'The second approval must come from someone other than the verifier';
+  end if;
+
+  update public.milestones
+  set second_approval_at  = now(),
+      second_approver_uid = v_uid
+  where id = p_milestone_id
+  returning * into v_row;
+
+  insert into public.activity_log (project_id, actor_uid, entity, entity_id, action, summary)
+  values (v_row.project_id, v_uid, 'milestone', v_row.id, 'second_approved',
+          format('Second approval recorded for “%s”', v_row.name));
+
+  return v_row;
+end;
+$$;
+
 /* Posts the ledger line for a paid milestone.
 
    Runs as definer so it can write the one kind of expense row the RLS policy
@@ -776,6 +857,17 @@ begin
     raise exception 'Milestone not found';
   end if;
 
+  /* PRD 5.3.4: a release above the threshold needs a second sign-off before
+     the money moves. Checked here rather than in the client, because this is
+     the statement that actually releases it. */
+  if p_next_status = 'paid'
+     and coalesce(v_row.release_amount, 0) > public.dual_approval_threshold()
+     and v_row.second_approval_at is null then
+    raise exception
+      'Releases above % require a second approval before payment',
+      public.dual_approval_threshold();
+  end if;
+
   /* The only legal transitions. Anything else is a client bug or an attempt
      to skip an approval step. */
   if not (
@@ -791,8 +883,12 @@ begin
   set status = p_next_status,
       pm_verified_at = case
         when p_next_status = 'approved' then now() else pm_verified_at end,
+      pm_verified_by = case
+        when p_next_status = 'approved' then v_uid else pm_verified_by end,
       customer_approved_at = case
         when p_next_status = 'paid' then now() else customer_approved_at end,
+      customer_approved_by = case
+        when p_next_status = 'paid' then v_uid else customer_approved_by end,
       paid_at = case
         when p_next_status = 'paid' then now() else paid_at end,
       payment_txn_id = case

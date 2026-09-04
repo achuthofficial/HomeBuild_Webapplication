@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react'
-import { Camera, Plus, TriangleAlert, ArrowRight } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Camera, CloudOff, Plus, TriangleAlert, ArrowRight } from 'lucide-react'
 
 import { Link } from 'react-router-dom'
 
@@ -30,6 +30,13 @@ import {
 } from '@/api/siteFeed'
 import { FormMessage } from '@/components/auth/AuthForm'
 import { listOpenFindings } from '@/api/alerts'
+import {
+  countQueued,
+  enqueueUpdate,
+  flushQueue,
+  isNetworkFailure,
+  isOffline,
+} from '@/lib/offlineQueue'
 import { onImageError } from '@/lib/imageFallback'
 import { useAuth } from '@/context/AuthContext'
 import { uploadSitePhoto } from '@/lib/storage'
@@ -92,6 +99,81 @@ export default function Construction() {
     { enabled: updateOpen && Boolean(draft.projectId) },
   )
 
+  /* How many updates are waiting for a connection (PRD 5.2.5). */
+  const [queued, setQueued] = useState(0)
+  const [syncing, setSyncing] = useState(false)
+
+  const refreshQueueCount = useCallback(async () => {
+    setQueued(await countQueued())
+  }, [])
+
+  /** Sends anything captured offline, then refreshes the feed. */
+  const syncQueue = useCallback(async () => {
+    if (syncing || isOffline()) return
+    setSyncing(true)
+    try {
+      const { sent, remaining } = await flushQueue((payload) =>
+        createSiteUpdate(payload),
+      )
+      if (sent > 0) {
+        toast(
+          `${sent} offline update${sent === 1 ? '' : 's'} synced.` +
+            (remaining ? ` ${remaining} still waiting.` : ''),
+        )
+        feed.refetch()
+        categories.refetch()
+        breakdown.refetch()
+      }
+    } finally {
+      setSyncing(false)
+      refreshQueueCount()
+    }
+    /* feed/categories/breakdown are query objects whose identity changes each
+       render; including them would re-create this on every render and defeat
+       the listener below. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncing, toast, refreshQueueCount])
+
+  /* Flush on reconnect, and once on mount in case the browser came back
+     online while the app was closed. */
+  useEffect(() => {
+    refreshQueueCount()
+    syncQueue()
+    const onOnline = () => syncQueue()
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /** Stores an update the connection could not carry, and closes the dialog. */
+  const queueForLater = async (payload) => {
+    try {
+      await enqueueUpdate(payload)
+    } catch {
+      setPosting(false)
+      setPostError(
+        'No connection, and this browser will not store the update offline. ' +
+          'Try again once you have signal.',
+      )
+      return
+    }
+
+    setPosting(false)
+    setUpdateOpen(false)
+    setDraft((d) => ({
+      ...d,
+      location: '',
+      notes: '',
+      milestoneId: '',
+      workersPresent: '',
+      materialsUsed: '',
+    }))
+    refreshQueueCount()
+    toast('Saved on this device. It will post when you are back online.', {
+      tone: 'info',
+    })
+  }
+
   /** Posts a real site update (PRD 8.3) rather than claiming one was posted. */
   const postUpdate = async (e) => {
     e.preventDefault()
@@ -102,19 +184,29 @@ export default function Construction() {
       return
     }
 
+    const payload = {
+      projectId: draft.projectId,
+      supervisorUid: authUser?.uid,
+      workCategory: draft.workCategory,
+      location: draft.location,
+      notes: draft.notes,
+      status: draft.status,
+      milestoneId: draft.milestoneId || null,
+      workersPresent: draft.workersPresent,
+      materialsUsed: draft.materialsUsed,
+    }
+
+    /* Offline: queue rather than fail (PRD 5.2.5). Checked BEFORE trying,
+       because a request on a dead connection can hang for 30 seconds before
+       it errors, and the supervisor's whole budget for this is two minutes. */
+    if (isOffline()) {
+      await queueForLater(payload)
+      return
+    }
+
     setPosting(true)
     try {
-      await createSiteUpdate({
-        projectId: draft.projectId,
-        supervisorUid: authUser?.uid,
-        workCategory: draft.workCategory,
-        location: draft.location,
-        notes: draft.notes,
-        status: draft.status,
-        milestoneId: draft.milestoneId || null,
-        workersPresent: draft.workersPresent,
-        materialsUsed: draft.materialsUsed,
-      })
+      await createSiteUpdate(payload)
       setPosting(false)
       setUpdateOpen(false)
       setDraft((d) => ({
@@ -130,6 +222,13 @@ export default function Construction() {
       categories.refetch()
     } catch (error) {
       setPosting(false)
+      /* The connection dropped mid-submit — the exact case the queue exists
+         for. A permission error is different and must be shown, not hidden
+         behind a "saved offline" message that will never send. */
+      if (isNetworkFailure(error)) {
+        await queueForLater(payload)
+        return
+      }
       setPostError(error.message)
     }
   }
@@ -213,6 +312,30 @@ export default function Construction() {
           </>
         }
       />
+
+      {/* Offline queue (PRD 5.2.5). Shown only when something is actually
+          waiting — a permanent "you are online" banner is noise. */}
+      {queued > 0 ? (
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-[10px] border border-warning/40 bg-warning-tile px-4 py-3">
+          <CloudOff className="size-4 shrink-0 text-warning" strokeWidth={2} />
+          <p className="min-w-0 flex-1 text-[12.5px] text-ink">
+            <span className="font-semibold">
+              {queued} update{queued === 1 ? '' : 's'} saved on this device.
+            </span>{' '}
+            {isOffline()
+              ? 'They will post automatically when you are back online.'
+              : 'Syncing now.'}
+          </p>
+          <button
+            type="button"
+            onClick={syncQueue}
+            disabled={syncing || isOffline()}
+            className="focus-ring shrink-0 rounded text-[12px] font-semibold text-brand-ink hover:underline disabled:opacity-50"
+          >
+            {syncing ? 'Syncing…' : 'Sync now'}
+          </button>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         {/* ---------------- feed timeline ---------------- */}

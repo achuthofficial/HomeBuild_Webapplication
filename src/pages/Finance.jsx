@@ -13,6 +13,7 @@ import { cn } from '@/lib/cn'
 import QueryBoundary, { KpiSkeleton, Skeleton, RowSkeleton } from '@/components/ui/QueryBoundary'
 import { FormMessage } from '@/components/auth/AuthForm'
 import { downloadCsv } from '@/lib/csv'
+import { downloadMilestoneReceipt } from '@/lib/receipt'
 import { listActivity } from '@/api/activity'
 import { rupees, longDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
@@ -21,7 +22,9 @@ import { useQuery } from '@/hooks/useQuery'
 import { Wallet, Banknote, PiggyBank } from 'lucide-react'
 import {
   MILESTONE_ACTIONS,
+  DUAL_APPROVAL_THRESHOLD,
   advanceMilestone,
+  secondApproveMilestone,
   createMilestone,
   listContractorOptions,
   getPrimaryProjectId,
@@ -110,7 +113,7 @@ function FinanceKpi({ label, value, delta, note, icon: Icon, iconTone }) {
 
 export default function Finance() {
   const { toast } = useToast()
-  const { authUser } = useAuth()
+  const { authUser, user } = useAuth()
   const [range, setRange] = useState(trendRanges[0])
   const [invoiceOpen, setInvoiceOpen] = useState(false)
   const [menuFor, setMenuFor] = useState(null)
@@ -254,6 +257,23 @@ export default function Finance() {
     } catch (error) {
       setRaising(false)
       setInvoiceError(error.message)
+    }
+  }
+
+  /** PRD 5.3.4's second sign-off on a large release. */
+  const secondApprove = async (milestone) => {
+    setAdvancing(true)
+    try {
+      await secondApproveMilestone(milestone.id)
+      setMenuFor(null)
+      toast(`Second approval recorded for “${milestone.milestone}”.`)
+      milestones.refetch()
+    } catch (error) {
+      /* The database refuses a second approval from the verifier, so this is
+         where the user finds out — surfaced, not swallowed. */
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setAdvancing(false)
     }
   }
 
@@ -814,7 +834,30 @@ export default function Finance() {
           {/* The one legal next step, from where this milestone actually is.
               Offering "Release Payment" on an unverified milestone would only
               produce an error from the database, which enforces the order. */}
-          {menuFor && MILESTONE_ACTIONS[menuFor.statusKey] ? (
+          {/* PRD 5.3.4: a release above the threshold needs a second sign-off
+              from someone other than the verifier. Shown as its own step,
+              because burying it inside "Release Payment" would let the person
+              clicking believe one approval was enough. */}
+          {menuFor?.statusKey === 'approved' &&
+          menuFor.needsSecondApproval &&
+          !menuFor.secondApprovedAt ? (
+            <>
+              <button
+                type="button"
+                disabled={advancing}
+                onClick={() => secondApprove(menuFor)}
+                className="focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] font-semibold text-brand-ink transition-colors hover:bg-brand-50 disabled:opacity-50"
+              >
+                {advancing ? 'Working…' : 'Record Second Approval'}
+              </button>
+              <p className="px-3 pb-1 pt-0.5 text-[11.5px] leading-snug text-ink-3">
+                {rupees(menuFor.amount)} is above the{' '}
+                {rupees(DUAL_APPROVAL_THRESHOLD)} dual-approval threshold. The
+                second approval must come from someone other than whoever
+                verified it.
+              </p>
+            </>
+          ) : menuFor && MILESTONE_ACTIONS[menuFor.statusKey] ? (
             <button
               type="button"
               disabled={advancing}
@@ -823,6 +866,12 @@ export default function Finance() {
             >
               {advancing ? 'Working…' : MILESTONE_ACTIONS[menuFor.statusKey].label}
             </button>
+          ) : null}
+
+          {menuFor?.statusKey === 'approved' && menuFor.secondApprovedAt ? (
+            <p className="px-3 pb-1 text-[11.5px] leading-snug text-success">
+              Second approval recorded.
+            </p>
           ) : null}
 
           {menuFor?.statusKey === 'pending_verification' ? (
@@ -836,10 +885,28 @@ export default function Finance() {
             </button>
           ) : null}
 
+          {/* PRD 5.3.5 asks for a PDF receipt on escrow transactions. */}
           {menuFor?.statusKey === 'paid' ? (
-            <p className="px-3 py-2.5 text-[13px] text-ink-2">
-              Paid in full. Transaction reference is on the ledger.
-            </p>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  downloadMilestoneReceipt({
+                    milestone: menuFor,
+                    project: { name: summary.data?.projectName },
+                    payer: user?.name,
+                  })
+                  setMenuFor(null)
+                  toast('Receipt downloaded.')
+                }}
+                className="focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] font-semibold text-brand-ink transition-colors hover:bg-brand-50"
+              >
+                Download Receipt (PDF)
+              </button>
+              <p className="px-3 py-2 text-[12px] text-ink-2">
+                Paid in full. Reference {menuFor.txnId ?? 'not recorded'}.
+              </p>
+            </>
           ) : null}
         </div>
       </Modal>

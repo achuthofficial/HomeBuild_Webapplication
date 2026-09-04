@@ -112,25 +112,33 @@ export async function createSiteUpdate({
   milestoneId = null,
   workersPresent = null,
   materialsUsed = null,
+  clientToken = null,
 }) {
   requireConfigured()
+
+  /* Upsert rather than insert, so a retry from the offline queue lands as a
+     no-op instead of a second copy of the same day's work. `ignoreDuplicates`
+     makes PostgREST return the existing row rather than a 409. */
   return unwrap(
     await supabase
       .from('site_updates')
-      .insert({
-        project_id: projectId,
-        supervisor_uid: supervisorUid,
-        work_category: workCategory,
-        location_on_site: location || null,
-        notes: notes || null,
-        status,
-        milestone_id: milestoneId || null,
-        /* PRD 5.2.5 optional metadata. */
-        workers_present: workersPresent ? Number(workersPresent) : null,
-        materials_used: materialsUsed?.trim() || null,
-      })
-      .select('id')
-      .single(),
+      .upsert(
+        {
+          project_id: projectId,
+          supervisor_uid: supervisorUid,
+          work_category: workCategory,
+          location_on_site: location || null,
+          notes: notes || null,
+          status,
+          milestone_id: milestoneId || null,
+          /* PRD 5.2.5 optional metadata. */
+          workers_present: workersPresent ? Number(workersPresent) : null,
+          materials_used: materialsUsed?.trim() || null,
+          client_token: clientToken,
+        },
+        { onConflict: 'client_token', ignoreDuplicates: true },
+      )
+      .select('id'),
   )
 }
 
