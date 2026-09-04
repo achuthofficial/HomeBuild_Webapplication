@@ -11,7 +11,30 @@ npm install
 npm run dev      # http://localhost:5173
 npm run build    # → dist/
 npm run preview  # serve the production build locally
+npm run lint     # eslint
+npm run images   # vendor the demo photography into public/images/
 ```
+
+**Run `npm run images` once, on a machine with open network access, and commit
+the result.** `src/data/media.js` points at local paths; until the folder is
+populated the sign-in illustration and the demo avatars 404. The script needs
+`images.unsplash.com` and `i.pravatar.cc`, and skips anything already present.
+
+### Backend setup
+
+1. `supabase/schema.sql`, then `supabase/seed.sql`, in the Supabase SQL editor.
+   Both are idempotent — re-running `schema.sql` is the documented upgrade
+   path. See `supabase/README.md`.
+2. Firebase Authentication for identity, bridged to Supabase as a third-party
+   issuer so Row Level Security can key on the Firebase UID. See
+   `AUTH_SETUP.md` and `STORAGE_SETUP.md`.
+
+### Offline behaviour
+
+The production build registers a service worker that caches the app shell, so
+the app opens on a site with no signal and site updates captured there queue in
+IndexedDB until the connection returns. It is registered in production only —
+in development it would sit in front of Vite's HMR and serve stale modules.
 
 
 ## Deploying to Vercel

@@ -151,9 +151,29 @@ separately. That line is written by `post_milestone_expense()`, a
 from inserting a row that claims a milestone — escrow lines must come from the
 payment workflow, not from a client.
 
+## Escrow release rules (PRD 5.3.4)
+
+A milestone moves `upcoming → pending_verification → approved → paid`, and the
+database refuses any other transition.
+
+Above **₹5,00,000** a release needs a second sign-off before payment, and
+`second_approve_milestone()` refuses it from the person who verified the
+milestone. Dual approval that one account can satisfy twice is a log entry,
+not a control. The threshold is a function (`dual_approval_threshold()`)
+rather than a literal, because it is a policy number and policy numbers move.
+
+Paying a milestone stamps `paid_at`, mints a payment reference, posts the
+ledger line, and writes an audit entry — all server-side, so none of it can be
+back-dated by a client.
+
+**Not implemented: KYC and bank verification.** 5.3.4 lists them under the
+payment provider, and there is no provider connected — a KYC step that
+verifies nothing would be worse than none. Payment references are prefixed
+`SIM-` and every receipt says so on its face.
+
 ## Workflow rules live in SQL, not the client
 
-Four functions enforce the parts that must not be bypassed by a client bug:
+Five functions enforce the parts that must not be bypassed by a client bug:
 
 - **`advance_milestone`** — the PRD 8.5 payment chain. A milestone cannot be
   paid before the customer approves, nor approved before the PM verifies.
@@ -167,6 +187,8 @@ Four functions enforce the parts that must not be bypassed by a client bug:
   alerts are excluded: their rework already shows as real delay on the phase,
   and counting them here would charge the schedule twice.
 - **`post_milestone_expense`** — posts the ledger line for a paid milestone.
+- **`second_approve_milestone`** — PRD 5.3.4's second sign-off, refused from
+  the verifier.
 
 Two triggers keep derived figures honest. Changing a phase's status or paying
 a milestone recalculates the project's `progress_pct` and `budget_consumed`,
@@ -221,11 +243,28 @@ Delete the seeded profiles once you have real users.
 
 ## Still to do before real customers
 
-**There is no organisation layer.** Membership isolates project from project,
-which is the important half, but any signed-in user can still see the full
-people and contractor directories, and invitations are not org-scoped. A
-multi-tenant deployment needs an `organisations` table and a tenant id on
-`profiles`, with the directory policies scoped to it.
+**There is no organisation layer, and this is the one real gap left.**
+Membership isolates project from project, which is the important half. What it
+does not do is stop a signed-in stranger reading the full `profiles`
+directory — names, emails and phone numbers of people they share no project
+with.
+
+This is deliberately left rather than guessed at: the PRD defines no tenancy
+model, and the fix is a product decision, not a mechanical one. The three
+options, in ascending order of work:
+
+1. Revoke `email` and `phone` from the table grant and serve them through a
+   definer function that checks for a shared project. Smallest change; keeps
+   every assignment picker working, since those need only name and role.
+2. Scope `profiles` reads to "shares a project with me". Tightest, but a newly
+   hired PM becomes invisible to the person who needs to assign them.
+3. A real `organisations` table with a tenant id on `profiles`, `projects`,
+   `contractors` and `invitations`, and every directory policy scoped to it.
+   Correct for a multi-tenant product, and the largest change.
+
+`contractors` staying readable is a separate and deliberate call — PRD goal 4
+describes a shared vetted network, and a name and trade are not sensitive the
+way a client's budget is.
 
 **Seeded profiles are placeholders.** Rows prefixed `seed-` exist so team
 stacks and assignments point at something. Real rows are created on first
@@ -255,6 +294,28 @@ Each is now derived: headcount from the `workers_present` a supervisor
 actually recorded, the pulse rail from `activity_log`, the findings rail from
 open alerts, the counters from `projects`, and the today marker from the
 project's start date.
+
+## Offline capture (PRD 5.2.5)
+
+Site updates survive a dead connection, which for the supervisor persona —
+"poor internet connectivity at most sites" — is the difference between an app
+that gets used and one that does not.
+
+- `src/lib/offlineQueue.js` queues updates in **IndexedDB** (not localStorage:
+  the queue holds photo Blobs).
+- `public/sw.js` caches the app shell so the app *loads* with no signal. It
+  deliberately leaves Supabase and Firebase requests alone — the queue depends
+  on seeing a real network error, and a worker quietly serving a stale API
+  response would make the screen look right while being wrong.
+- `site_updates.client_token` makes the retry idempotent. The queue is
+  at-least-once by nature (it sends, then deletes); a reload timed between
+  those two steps posted the same update twice before this existed.
+
+The unique index on `client_token` is deliberately **not partial**. Postgres
+can only infer a partial index as an `ON CONFLICT` target if the statement
+repeats the predicate, and PostgREST's upsert does not — so the retry would
+have failed rather than collapsing. NULLs are distinct in a unique index
+anyway, so updates posted while online never collide.
 
 ## Where the queries live
 
