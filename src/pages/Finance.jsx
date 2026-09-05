@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import { Download, Plus, MoreHorizontal, TrendingUp, TrendingDown } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
@@ -144,6 +144,10 @@ export default function Finance() {
     contractorId: '',
   })
 
+  /* AppLayout bumps this when Create New Project succeeds, from the topbar
+     that's reachable on every screen. */
+  const { dataVersion } = useOutletContext()
+
   /* The finance screen is per-project. A link from the Projects card (or a
      bookmark) names one in the URL; with none given this falls back to the
      oldest active project, same as before the switcher below existed. The
@@ -152,12 +156,14 @@ export default function Finance() {
   const requestedProjectId = searchParams.get('project')
   const projectQuery = useQuery(
     () => resolveProjectRef(requestedProjectId),
-    [requestedProjectId],
+    [requestedProjectId, dataVersion],
   )
   const projectId = projectQuery.data?.id ?? null
 
-  /* Every project the manager could switch to. */
-  const projectOptions = useQuery(() => listProjectOptions(), [])
+  /* Every project the manager could switch to — keyed on dataVersion too, or
+     a project created while sitting on this screen would be invisible to the
+     switcher until a reload. */
+  const projectOptions = useQuery(() => listProjectOptions(), [dataVersion])
   const switchProject = (name) => {
     const match = projectOptions.data?.find((p) => p.name === name)
     if (!match) return

@@ -1,4 +1,4 @@
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useOutletContext } from 'react-router-dom'
 import {
   Building2,
   CalendarClock,
@@ -103,9 +103,16 @@ function buildKpis(k) {
 export default function Dashboard() {
   const navigate = useNavigate()
   const { user } = useAuth()
+  /* AppLayout bumps this when Create New Project succeeds — from the topbar,
+     reachable on every screen including this one, the app's landing page.
+     Projects.jsx already keys its list on it; this screen never did, so a
+     project created while sitting on Overview (the default screen after
+     sign-in) needed a reload before "Active Projects" or the status rail
+     below noticed it existed. */
+  const { dataVersion } = useOutletContext()
 
-  const kpis = useQuery(() => getDashboardKpis(), [])
-  const overview = useQuery(() => getStatusOverview(4), [])
+  const kpis = useQuery(() => getDashboardKpis(), [dataVersion])
+  const overview = useQuery(() => getStatusOverview(4), [dataVersion])
   const updates = useQuery(() => getRecentUpdates(3), [])
 
   return (

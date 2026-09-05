@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import { FileDown, TrendingUp, TriangleAlert, Users, Zap } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
@@ -137,17 +137,21 @@ export default function Schedule() {
   const [phaseBusy, setPhaseBusy] = useState(false)
   const [statusFilter, setStatusFilter] = useState('All Phases')
 
+  /* AppLayout bumps this when Create New Project succeeds, from the topbar
+     that's reachable on every screen. */
+  const { dataVersion } = useOutletContext()
+
   /* Same resolution as Finance: a link or bookmark can name a project in the
      URL, otherwise this falls back to the oldest active one. */
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedProjectId = searchParams.get('project')
   const projectQuery = useQuery(
     () => resolveProjectRef(requestedProjectId),
-    [requestedProjectId],
+    [requestedProjectId, dataVersion],
   )
   const projectId = projectQuery.data?.id ?? null
 
-  const projectOptions = useQuery(() => listProjectOptions(), [])
+  const projectOptions = useQuery(() => listProjectOptions(), [dataVersion])
   const switchProject = (name) => {
     const match = projectOptions.data?.find((p) => p.name === name)
     if (!match) return
