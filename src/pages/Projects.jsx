@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
-import { PlusCircle, SlidersHorizontal, Wallet, CalendarDays } from 'lucide-react'
+import { PlusCircle, SlidersHorizontal, Wallet, CalendarDays, ChevronDown } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
 import Card from '@/components/ui/Card'
@@ -10,6 +10,7 @@ import StatusDot from '@/components/ui/StatusDot'
 import AvatarStack from '@/components/ui/AvatarStack'
 import Pagination from '@/components/ui/Pagination'
 import QueryBoundary, { Skeleton, RowSkeleton } from '@/components/ui/QueryBoundary'
+import { cn } from '@/lib/cn'
 import { estDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
 import { useQuery } from '@/hooks/useQuery'
@@ -20,6 +21,7 @@ import {
   listProjects,
   listProjectFilters,
   updateProjectProgress,
+  updateProjectStatus,
   claimDemoProjects,
   listProjectMembers,
   addProjectMember,
@@ -38,6 +40,21 @@ const LIFECYCLE = {
   Paused: 'paused',
   Completed: 'completed',
   Cancelled: 'cancelled',
+}
+
+/* value -> label, for the stage pill and its toast — the inverse of LIFECYCLE. */
+const LIFECYCLE_LABELS = Object.fromEntries(
+  Object.entries(LIFECYCLE).map(([label, value]) => [value, label]),
+)
+
+/** Same tint pairs as Chip, since the stage control renders as one. */
+const STAGE_TONE = {
+  lead: 'bg-chip text-ink-2',
+  in_design: 'bg-violet-bg text-violet',
+  active: 'bg-success-bg text-success',
+  paused: 'bg-warning-bg text-warning',
+  completed: 'bg-brand-50 text-brand-ink',
+  cancelled: 'bg-danger-bg text-danger',
 }
 
 const statusMatch = {
@@ -189,6 +206,26 @@ export default function Projects() {
     try {
       await updateProjectProgress(project.id, next, authUser?.uid)
       toast(`${project.name} set to ${next}% complete.`)
+      projectsQuery.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setSavingId(null)
+    }
+  }
+
+  /* The lifecycle stage — Lead / In Design / Active / Paused / Completed /
+     Cancelled — had a spot in the advanced filter but nowhere to change it: a
+     project created as "In Design" had no way to move to "Active" once work
+     actually started. updateProjectStatus() already did this; nothing in the
+     UI called it. */
+  const commitStatus = async (project, nextStatus) => {
+    if (nextStatus === project.status) return
+
+    setSavingId(project.id)
+    try {
+      await updateProjectStatus(project.id, { status: nextStatus }, authUser?.uid)
+      toast(`${project.name} moved to ${LIFECYCLE_LABELS[nextStatus]}.`)
       projectsQuery.refetch()
     } catch (error) {
       toast(error.message, { tone: 'info' })
@@ -381,6 +418,34 @@ export default function Projects() {
                     className="focus-ring tnum w-11 rounded-[6px] border border-transparent bg-transparent px-1 py-0.5 text-right text-[13px] font-bold text-ink hover:border-line focus:border-line disabled:opacity-50"
                   />
                   <span className="text-[13px] font-bold text-ink">%</span>
+                </label>
+              </div>
+
+              {/* The lifecycle stage: a real dropdown, not a status dot, since
+                  this is the one status on the card that a manager moves by
+                  hand rather than the system deriving it. */}
+              <div className="mt-2.5">
+                <label className="relative inline-block">
+                  <span className="sr-only">{project.name} lifecycle stage</span>
+                  <select
+                    value={project.status}
+                    disabled={savingId === project.id}
+                    onChange={(e) => commitStatus(project, e.target.value)}
+                    className={cn(
+                      'focus-ring h-6 cursor-pointer appearance-none rounded-full py-0 pl-2.5 pr-6 text-[10px] font-semibold uppercase tracking-[0.05em] disabled:cursor-default disabled:opacity-50',
+                      STAGE_TONE[project.status] ?? STAGE_TONE.lead,
+                    )}
+                  >
+                    {Object.entries(LIFECYCLE).map(([label, value]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    className="pointer-events-none absolute right-1.5 top-1/2 size-3 -translate-y-1/2 opacity-60"
+                    strokeWidth={2}
+                  />
                 </label>
               </div>
 
