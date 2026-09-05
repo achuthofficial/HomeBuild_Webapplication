@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
-import { PlusCircle, SlidersHorizontal } from 'lucide-react'
+import { Link, useOutletContext } from 'react-router-dom'
+import { PlusCircle, SlidersHorizontal, Wallet, CalendarDays } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
 import Card from '@/components/ui/Card'
@@ -422,6 +422,28 @@ export default function Projects() {
                 <span className="text-[10px] font-medium uppercase tracking-[0.06em] text-ink-4">
                   Est: {estDate(project.estimate)}
                 </span>
+              </div>
+
+              {/* Finance and Schedule are per-project screens; with more than
+                  one active project neither had a way to say which one to
+                  open — both always fell back to the oldest active project.
+                  These name this card's project in the URL, so the screen
+                  they land on is the one the manager actually clicked. */}
+              <div className="mt-3 flex items-center gap-4 border-t border-line pt-3">
+                <Link
+                  to={`/finance?project=${project.id}`}
+                  className="focus-ring inline-flex items-center gap-1.5 rounded text-[11.5px] font-semibold text-ink-2 transition-colors hover:text-brand-ink"
+                >
+                  <Wallet className="size-3.5" strokeWidth={1.75} />
+                  Finance
+                </Link>
+                <Link
+                  to={`/schedule?project=${project.id}`}
+                  className="focus-ring inline-flex items-center gap-1.5 rounded text-[11.5px] font-semibold text-ink-2 transition-colors hover:text-brand-ink"
+                >
+                  <CalendarDays className="size-3.5" strokeWidth={1.75} />
+                  Schedule
+                </Link>
               </div>
             </Card>
           ))}

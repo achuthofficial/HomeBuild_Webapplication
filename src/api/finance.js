@@ -23,6 +23,37 @@ export async function getPrimaryProjectId() {
   return rows[0] ?? null
 }
 
+/**
+ * Which project a per-project screen (Finance, Schedule) should show.
+ *
+ * A manager with more than one active project used to have no way to look at
+ * anything but the oldest one — Finance and Schedule always called
+ * `getPrimaryProjectId()` with nothing able to override it, so every
+ * project's "Finance" and "Schedule" opened onto the same figures. The
+ * project switcher on those screens, and a link from the Projects card, both
+ * name a project through this instead.
+ *
+ * `requestedId` wins when it is a project this account can actually open —
+ * checked by asking for it rather than trusting the caller, since Row Level
+ * Security is what decides that, not this function. A stale link (the
+ * project was deleted, or membership was removed) falls back to the old
+ * default rather than showing an error for a screen that can still be useful.
+ */
+export async function resolveProjectRef(requestedId) {
+  requireConfigured()
+  if (requestedId) {
+    const rows = unwrap(
+      await supabase
+        .from('projects')
+        .select('id, name')
+        .eq('id', requestedId)
+        .limit(1),
+    )
+    if (rows[0]) return rows[0]
+  }
+  return getPrimaryProjectId()
+}
+
 export async function getFinanceSummary(projectId) {
   requireConfigured()
   const row = unwrap(

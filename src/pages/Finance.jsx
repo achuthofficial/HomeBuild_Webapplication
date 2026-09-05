@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Download, Plus, MoreHorizontal, TrendingUp, TrendingDown } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
@@ -25,7 +26,7 @@ import {
   advanceMilestone,
   createMilestone,
   listContractorOptions,
-  getPrimaryProjectId,
+  resolveProjectRef,
   getFinanceSummary,
   getBudgetTrend,
   getCostCategories,
@@ -33,6 +34,7 @@ import {
   recordExpense,
   listMilestones,
 } from '@/api/finance'
+import { listProjectOptions } from '@/api/siteFeed'
 
 export const trendRanges = ['Last 6 Months', 'Last 12 Months', 'Year to Date']
 
@@ -139,10 +141,32 @@ export default function Finance() {
     contractorId: '',
   })
 
-  /* The finance screen is per-project. Resolve which project first, then fetch
-     its figures — the dependent queries stay disabled until it lands. */
-  const projectQuery = useQuery(() => getPrimaryProjectId(), [])
+  /* The finance screen is per-project. A link from the Projects card (or a
+     bookmark) names one in the URL; with none given this falls back to the
+     oldest active project, same as before the switcher below existed. The
+     dependent queries stay disabled until a project id lands either way. */
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedProjectId = searchParams.get('project')
+  const projectQuery = useQuery(
+    () => resolveProjectRef(requestedProjectId),
+    [requestedProjectId],
+  )
   const projectId = projectQuery.data?.id ?? null
+
+  /* Every project the manager could switch to. */
+  const projectOptions = useQuery(() => listProjectOptions(), [])
+  const switchProject = (name) => {
+    const match = projectOptions.data?.find((p) => p.name === name)
+    if (!match) return
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.set('project', match.id)
+        return next
+      },
+      { replace: true },
+    )
+  }
 
   const summary = useQuery(
     () => getFinanceSummary(projectId),
@@ -290,6 +314,17 @@ export default function Finance() {
         }
         actions={
           <>
+            {/* Hidden with one project — nothing to switch to. With several,
+                this is the only control that lets a manager look at any
+                project's finances but the oldest active one. */}
+            {(projectOptions.data?.length ?? 0) > 1 ? (
+              <FilterSelect
+                label="Project"
+                value={projectQuery.data?.name ?? '…'}
+                options={projectOptions.data.map((p) => p.name)}
+                onChange={switchProject}
+              />
+            ) : null}
             <Button
               variant="outline"
               icon={Download}

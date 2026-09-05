@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { FileDown, TrendingUp, TriangleAlert, Users, Zap } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
@@ -14,7 +15,7 @@ import QueryBoundary, { Skeleton, RowSkeleton } from '@/components/ui/QueryBound
 import { cn } from '@/lib/cn'
 import { useToast } from '@/context/ToastContext'
 import { useQuery } from '@/hooks/useQuery'
-import { getPrimaryProjectId } from '@/api/finance'
+import { resolveProjectRef } from '@/api/finance'
 import {
   getSchedule,
   setPhaseStatus,
@@ -23,6 +24,7 @@ import {
   PHASE_ACTIONS,
 } from '@/api/schedule'
 import { listActivity } from '@/api/activity'
+import { listProjectOptions } from '@/api/siteFeed'
 import { downloadCsv } from '@/lib/csv'
 import { longDate, clockTime } from '@/lib/format'
 import { scheduleViews } from '@/data/schedule'
@@ -135,8 +137,29 @@ export default function Schedule() {
   const [phaseBusy, setPhaseBusy] = useState(false)
   const [statusFilter, setStatusFilter] = useState('All Phases')
 
-  const projectQuery = useQuery(() => getPrimaryProjectId(), [])
+  /* Same resolution as Finance: a link or bookmark can name a project in the
+     URL, otherwise this falls back to the oldest active one. */
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedProjectId = searchParams.get('project')
+  const projectQuery = useQuery(
+    () => resolveProjectRef(requestedProjectId),
+    [requestedProjectId],
+  )
   const projectId = projectQuery.data?.id ?? null
+
+  const projectOptions = useQuery(() => listProjectOptions(), [])
+  const switchProject = (name) => {
+    const match = projectOptions.data?.find((p) => p.name === name)
+    if (!match) return
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.set('project', match.id)
+        return next
+      },
+      { replace: true },
+    )
+  }
 
   const schedule = useQuery(
     () => getSchedule(projectId),
@@ -248,6 +271,17 @@ export default function Schedule() {
         title="Master Construction Schedule"
         actions={
           <>
+            {/* Hidden with one project — nothing to switch to. With several,
+                this is the only control that lets a manager look at any
+                project's schedule but the oldest active one. */}
+            {(projectOptions.data?.length ?? 0) > 1 ? (
+              <FilterSelect
+                label="Project"
+                value={projectQuery.data?.name ?? '…'}
+                options={projectOptions.data.map((p) => p.name)}
+                onChange={switchProject}
+              />
+            ) : null}
             <Segmented
               options={scheduleViews}
               value={view}
