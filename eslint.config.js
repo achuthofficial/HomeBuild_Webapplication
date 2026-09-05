@@ -20,7 +20,13 @@ export default [
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
-      globals: { ...globals.browser, ...globals.node },
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        /* Inlined by vite.config.js `define`, so it exists at runtime but
+           nothing declares it in source. */
+        __APP_VERSION__: 'readonly',
+      },
       parserOptions: {
         ecmaFeatures: { jsx: true },
       },

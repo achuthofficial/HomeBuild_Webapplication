@@ -131,6 +131,18 @@ scope or needs credentials/infrastructure this repo does not have. See
 `supabase/README.md` for the one open security decision (the `profiles`
 directory is readable by any signed-in user).
 
-`public/images/` is empty — run `npm run images` on a machine with open
-network access and commit the result, or the sign-in illustration and demo
-avatars 404.
+## Images
+
+The sign-in screen's hero photo and the three faces in its "+1,200 project
+managers" stack are **hotlinked** (`src/data/media.js`) — Unsplash and
+pravatar. That is deliberate and the user asked for it: the screen is
+unauthenticated and decorative, it degrades to a neutral placeholder through
+`onImageError` when a host is unreachable, and a fresh clone renders correctly
+with no build step.
+
+`public/images/` is therefore empty by design. `npm run images` still vendors
+those four files for a deployment that would rather serve them locally; point
+`media.js` at `/images/…` afterwards.
+
+Every other image in the app comes out of Supabase Storage with the row that
+references it. There are no other hard-coded images.
