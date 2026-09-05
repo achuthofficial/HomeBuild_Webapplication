@@ -30,33 +30,27 @@ Where a workflow spans apps — a milestone needs PM verification *then*
 customer approval — this app implements the PM's half and **shows** the other
 half as status, not as a button.
 
-## Resolved: what was removed
+## Removed: everything that belongs to the other two apps
 
-The Design screen and the Compass home screen were built from the PRD before
-the manager-only scope was known, and are **gone from this app** — absent from
-every mockup, and customer-facing by the PRD's own wording.
+Built from the PRD before the manager-only scope was known:
 
-Their engine is deliberately kept, because the customer app will need exactly
-it: `src/lib/vastu.js`, `src/lib/planValidation.js`, `src/lib/planGenerator.js`,
-`src/components/design/FloorPlanSvg.jsx`, `src/api/design.js`, and the
-`floor_plans` table with `select_floor_plan()`.
+| Removed | Belonged to |
+|---|---|
+| `Compass.jsx`, `Landing.jsx`, `api/compass.js` | Customer — PRD section 5 |
+| `Design.jsx` and its route | Customer — PRD 5.1's stories are all "As a homeowner…" |
+| `offlineQueue.js`, `public/sw.js`, the offline banner | Site supervisor on a bad connection |
+| `approved -> paid` in `MILESTONE_ACTIONS` | Customer approves the release, in their app |
+| "Log Alert" on Alerts | Not in `gggggg.png`; alerts come from the CV model |
 
-## Still questionable here
+**The engine behind the Design screen is deliberately kept** — the customer
+app will need exactly it: `src/lib/vastu.js`, `src/lib/planValidation.js`,
+`src/lib/planGenerator.js`, `src/components/design/FloorPlanSvg.jsx`,
+`src/api/design.js`, and the `floor_plans` table with `select_floor_plan()`.
 
-Built for the wrong audience, not yet resolved — ask before changing:
-
-- "New Update" / "Post Update" on Construction. The mockup HAS this button, so
-  the design says it belongs; the supervisor app filing the update says it
-  does not. Unresolved.
-- `src/lib/offlineQueue.js`, `public/sw.js`, and the 1080p compression in
-  `src/lib/storage.js` — built for the supervisor on a bad site connection. A
-  PM on a laptop does not need them. Harmless, but dead weight here.
-- `MILESTONE_ACTIONS` in `src/api/finance.js` includes the customer's approval
-  step. This app should arguably offer only the PM's verification and show the
-  customer's approval as status.
-- "Log Alert" on the Alerts screen is NOT in the mockup. It was added because
-  the CV pipeline is out of scope and without it no alert can ever be created
-  in this build. Remove it once alerts arrive from somewhere real.
+The database is shared by all three apps, so it is NOT trimmed to match. It
+still holds `floor_plans`, the full milestone chain including the customer's
+approval, and `profiles.role` for all three personas. Only this app's UI is
+manager-only.
 
 ## Design mockups
 
@@ -82,19 +76,21 @@ since PRD 5.1's user stories are all written "As a homeowner…".
 
 ### Where the mockups and the PRD disagree
 
-Both are authoritative and they conflict in places. Resolved conflicts are
-recorded here so they are not re-litigated:
+**The mockup wins.** Decided by the user, and applied throughout:
 
-| Topic | Mockup says | PRD says |
-|---|---|---|
-| Gantt legend | Completed / In Progress / Baseline Plan / Forecasted | 5.4.5: baseline **blue**, actual **green**, forecast **violet** |
-| Gantt baseline bar | grey | blue |
-| Today marker | violet | 5.4.5: **red**, updating daily |
-| Finance categories | Construction Materials / Permits & Legal / Labor & Subcontracting | 5.3.2: six fixed categories, Civil 48% … Contingency 10% |
-| Construction rail | "AI Insights", invented findings | 5.2.3: CV alert categories |
+| Topic | Resolution |
+|---|---|
+| Gantt palette | Mockup: grey baseline, green done, violet in-progress, red delayed, violet TODAY line |
+| Gantt legend | Mockup: Completed / In Progress / Baseline Plan / Forecasted |
+| Money format | Mockup: `en-US` grouping (₹12,450,000), NOT Indian (₹1,24,50,000) |
+| Category bars (PRD 5.3.5) | Removed — the mockup's card is a donut and legend only |
+| Delay Analysis (PRD 5.4.4) | Removed — not in `eeeee.png` |
+| Alert times | Mockup: relative ("2 mins ago") |
 
 A mockup showing static demo content is **not** an instruction to keep the
-data fake. Match its layout, labels and structure; fill it with real data.
+data fake. Match its layout, labels and structure; fill it with real data. The
+schema still carries what the removed screens used, so any of it can come back
+without a migration.
 
 ## The stack, briefly
 

@@ -315,10 +315,17 @@ export async function secondApproveMilestone(milestoneId) {
   return Array.isArray(rows) ? rows[0] : rows
 }
 
+/**
+ * What a PROJECT MANAGER may do to a milestone in this app.
+ *
+ * `approved -> paid` is deliberately absent. That step is the customer
+ * approving the release, and the customer has their own application; the
+ * database still enforces the whole chain, so a PM cannot reach it from here
+ * even by accident.
+ */
 export const MILESTONE_ACTIONS = {
   upcoming: { next: 'pending_verification', label: 'Submit for Verification' },
   pending_verification: { next: 'approved', label: 'Verify & Approve' },
-  approved: { next: 'paid', label: 'Release Payment' },
 }
 
 export async function advanceMilestone(milestoneId, nextStatus) {

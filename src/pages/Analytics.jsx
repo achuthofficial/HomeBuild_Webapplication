@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Download, RefreshCw, Plus } from 'lucide-react'
+import { Download, RefreshCw } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
 import Card from '@/components/ui/Card'
@@ -7,21 +7,15 @@ import Button from '@/components/ui/Button'
 import Chip from '@/components/ui/Chip'
 import FilterSelect from '@/components/ui/FilterSelect'
 import Pagination from '@/components/ui/Pagination'
-import Modal from '@/components/ui/Modal'
-import { FormMessage } from '@/components/auth/AuthForm'
 import QueryBoundary, { KpiSkeleton, RowSkeleton } from '@/components/ui/QueryBoundary'
 import { cn } from '@/lib/cn'
-import { longDate } from '@/lib/format'
+import { longDate, timeAgo } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
 import { useQuery } from '@/hooks/useQuery'
-import { getPrimaryProjectId } from '@/api/finance'
 import { useAuth } from '@/context/AuthContext'
 import { downloadCsv } from '@/lib/csv'
 import {
   listAlerts,
-  raiseAlert,
-  CV_CATEGORIES,
-  SEVERITIES,
   getAlertKpis,
   setAlertStatus,
   alertActionsFor,
@@ -87,19 +81,6 @@ export default function Analytics() {
   const [severity, setSeverity] = useState('All Levels')
   const [status, setStatus] = useState('Active Only')
   const [page, setPage] = useState(1)
-  const [logOpen, setLogOpen] = useState(false)
-  const [logging, setLogging] = useState(false)
-  const [logError, setLogError] = useState(null)
-  const [log, setLog] = useState({
-    category: CV_CATEGORIES[0].label,
-    severity: CV_CATEGORIES[0].severity,
-    locationText: '',
-    description: '',
-  })
-
-  /* Alerts hang off a project, so logging one needs to know which. */
-  const projectQuery = useQuery(() => getPrimaryProjectId(), [])
-  const projectId = projectQuery.data?.id ?? null
 
   /* Filtering and paging happen in the query, not the browser: there are 128
      seeded alerts and the CV pipeline adds more, so fetching them all to slice
@@ -122,43 +103,6 @@ export default function Analytics() {
    * rather than silently stored.
    */
   const [actingOn, setActingOn] = useState(null)
-
-  /**
-   * Logs a defect a person spotted (PRD 5.2.3's categories).
-   *
-   * The CV pipeline that is supposed to raise these is out of scope, which
-   * left the table readable but never writable outside the seed — and left
-   * the schedule forecast's "open high-severity alerts" term with nothing to
-   * count on a real project.
-   */
-  const saveLog = async (e) => {
-    e.preventDefault()
-    setLogError(null)
-    setLogging(true)
-    try {
-      await raiseAlert({
-        projectId,
-        category: log.category,
-        severity: log.severity,
-        description: log.description,
-        locationText: log.locationText,
-      })
-      setLogOpen(false)
-      setLog({
-        category: CV_CATEGORIES[0].label,
-        severity: CV_CATEGORIES[0].severity,
-        locationText: '',
-        description: '',
-      })
-      toast(`${log.severity} alert logged.`)
-      alertsQuery.refetch()
-      kpisQuery.refetch()
-    } catch (error) {
-      setLogError(error.message)
-    } finally {
-      setLogging(false)
-    }
-  }
 
   const runAction = async (alert, nextStatus, label) => {
     setActingOn(alert.id)
@@ -231,14 +175,7 @@ export default function Analytics() {
             >
               Refresh Sync
             </Button>
-            <Button
-              variant="primary"
-              icon={Plus}
-              onClick={() => setLogOpen(true)}
-              disabled={!projectId}
-            >
-              Log Alert
-            </Button>
+
           </>
         }
       />
@@ -379,7 +316,7 @@ export default function Analytics() {
                   </td>
 
                   <td className="px-5 py-4 text-[12.5px] text-ink-3">
-                    {longDate(alert.detected)}
+                    {timeAgo(alert.detected)}
                   </td>
 
                   <td className="px-5 py-4">
@@ -442,114 +379,6 @@ export default function Analytics() {
         </div>
       </Card>
 
-      {/* ---------------- log an alert (PRD 5.2.3) ---------------- */}
-      <Modal
-        open={logOpen}
-        onClose={() => setLogOpen(false)}
-        title="Log Alert"
-        description="A quality issue observed on site, in the same categories the CV model uses."
-        size="sm"
-        footer={
-          <>
-            <Button variant="outline" onClick={() => setLogOpen(false)} disabled={logging}>
-              Cancel
-            </Button>
-            <Button form="log-alert-form" type="submit" variant="danger" disabled={logging}>
-              {logging ? 'Logging…' : 'Log Alert'}
-            </Button>
-          </>
-        }
-      >
-        <form id="log-alert-form" onSubmit={saveLog} className="space-y-3.5">
-          <FormMessage>{logError}</FormMessage>
-
-          <div>
-            <label htmlFor="al-cat" className="eyebrow mb-1.5 block">
-              Category
-            </label>
-            <select
-              id="al-cat"
-              value={log.category}
-              onChange={(e) => {
-                const next = CV_CATEGORIES.find((c) => c.label === e.target.value)
-                /* Picking a category also sets the severity the PRD assigns
-                   it, which stays editable — a cracked column is worse than
-                   the table's default for its category. */
-                setLog((v) => ({
-                  ...v,
-                  category: e.target.value,
-                  severity: next?.severity ?? v.severity,
-                }))
-              }}
-              disabled={logging}
-              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
-            >
-              {CV_CATEGORIES.map((c) => (
-                <option key={c.label} value={c.label}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="al-sev" className="eyebrow mb-1.5 block">
-                Severity
-              </label>
-              <select
-                id="al-sev"
-                value={log.severity}
-                onChange={(e) => setLog((v) => ({ ...v, severity: e.target.value }))}
-                disabled={logging}
-                className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
-              >
-                {SEVERITIES.map((sev) => (
-                  <option key={sev} value={sev}>
-                    {sev}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="al-loc" className="eyebrow mb-1.5 block">
-                Location
-              </label>
-              <input
-                id="al-loc"
-                value={log.locationText}
-                onChange={(e) => setLog((v) => ({ ...v, locationText: e.target.value }))}
-                disabled={logging}
-                placeholder="Zone 3, Column C4"
-                className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label htmlFor="al-desc" className="eyebrow mb-1.5 block">
-              Description
-            </label>
-            <textarea
-              id="al-desc"
-              rows={3}
-              required
-              value={log.description}
-              onChange={(e) => setLog((v) => ({ ...v, description: e.target.value }))}
-              disabled={logging}
-              placeholder="Rebar spacing wider than drawing on the third lift."
-              className="focus-ring w-full rounded-[8px] border border-line bg-surface px-3 py-2 text-[13px] text-ink"
-            />
-          </div>
-
-          <p className="text-[11.5px] leading-relaxed text-ink-3">
-            Logged by hand, so no confidence score is recorded — that figure
-            belongs to the model. Open <strong>High</strong> and{' '}
-            <strong>Critical</strong> alerts add rework days to the schedule
-            forecast.
-          </p>
-        </form>
-      </Modal>
     </>
   )
 }

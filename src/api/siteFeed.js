@@ -76,6 +76,12 @@ export async function listFeedEntries({ projectId, category } = {}) {
       : row.work_category,
     category: row.work_category,
     date: row.uploaded_at,
+    /* The mockup shows the time of day beside the date. The markup always had
+       a slot for it; nothing ever filled it. */
+    time: new Date(row.uploaded_at).toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+    }),
     status: STATUS_LABELS[row.status] ?? STATUS_LABELS.in_progress,
     note: row.notes,
     workersPresent: row.workers_present ?? null,

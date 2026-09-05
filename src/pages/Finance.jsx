@@ -22,9 +22,7 @@ import { useQuery } from '@/hooks/useQuery'
 import { Wallet, Banknote, PiggyBank } from 'lucide-react'
 import {
   MILESTONE_ACTIONS,
-  DUAL_APPROVAL_THRESHOLD,
   advanceMilestone,
-  secondApproveMilestone,
   createMilestone,
   listContractorOptions,
   getPrimaryProjectId,
@@ -168,9 +166,8 @@ export default function Finance() {
   )
 
   /* getCostCategories returns the categories plus any spending that names no
-     category, so unpack rather than treating the result as a bare list. */
+     category; the donut wants only the categories. */
   const categoryList = categories.data?.categories ?? []
-  const uncategorisedSpend = categories.data?.uncategorised ?? 0
 
   const expenseCategories = useQuery(
     () => listExpenseCategories(projectId),
@@ -257,23 +254,6 @@ export default function Finance() {
     } catch (error) {
       setRaising(false)
       setInvoiceError(error.message)
-    }
-  }
-
-  /** PRD 5.3.4's second sign-off on a large release. */
-  const secondApprove = async (milestone) => {
-    setAdvancing(true)
-    try {
-      await secondApproveMilestone(milestone.id)
-      setMenuFor(null)
-      toast(`Second approval recorded for “${milestone.milestone}”.`)
-      milestones.refetch()
-    } catch (error) {
-      /* The database refuses a second approval from the verifier, so this is
-         where the user finds out — surfaced, not swallowed. */
-      toast(error.message, { tone: 'info' })
-    } finally {
-      setAdvancing(false)
     }
   }
 
@@ -400,17 +380,6 @@ export default function Finance() {
         <Card className="p-5">
           <CardHeader
             title="Category Breakdown"
-            action={
-              projectId ? (
-                <button
-                  type="button"
-                  onClick={() => setExpenseOpen(true)}
-                  className="focus-ring rounded text-[12px] font-semibold text-brand-ink hover:underline"
-                >
-                  Record spending
-                </button>
-              ) : null
-            }
           />
           <div className="mt-5">
             {projectQuery.isLoading || categories.isLoading ? (
@@ -424,55 +393,7 @@ export default function Finance() {
                 No cost categories recorded.
               </p>
             ) : (
-              <>
-                <DonutChart data={categoryList} />
-
-                {/* PRD 5.3.5: budget vs spent at category level, with bars.
-                    The donut alone only ever showed the PLAN — how the budget
-                    was divided up, never how much of each slice had gone. */}
-                <ul className="mt-5 space-y-3 border-t border-line pt-4">
-                  {categoryList.map((c) => (
-                    <li key={c.id ?? c.label}>
-                      <div className="flex items-baseline justify-between gap-3">
-                        <p className="truncate text-[12.5px] font-medium text-ink">
-                          {c.label}
-                        </p>
-                        <p className="tnum shrink-0 text-[12px] text-ink-2">
-                          {rupees(c.spent)}
-                          <span className="text-ink-4"> / {rupees(c.budgeted)}</span>
-                        </p>
-                      </div>
-                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-canvas">
-                        <div
-                          className={cn(
-                            'h-full rounded-full transition-[width]',
-                            c.over ? 'bg-danger' : 'bg-brand-600',
-                          )}
-                          /* Bar is clamped so it cannot spill out of its
-                             track; the number beside it still reads over
-                             100%, so an overrun is visible either way. */
-                          style={{ width: `${Math.min(100, c.usedPct)}%` }}
-                        />
-                      </div>
-                      <p
-                        className={cn(
-                          'mt-1 text-[11px] font-semibold',
-                          c.over ? 'text-danger' : 'text-ink-4',
-                        )}
-                      >
-                        {c.usedPct}% used{c.over ? ' — over budget' : ''}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-
-                {uncategorisedSpend > 0 ? (
-                  <p className="mt-3 text-[11.5px] text-ink-2">
-                    {rupees(uncategorisedSpend)} of spending is not assigned to a
-                    category, so it appears in the total but in none of the bars.
-                  </p>
-                ) : null}
-              </>
+              <DonutChart data={categoryList} />
             )}
           </div>
         </Card>
@@ -834,30 +755,11 @@ export default function Finance() {
           {/* The one legal next step, from where this milestone actually is.
               Offering "Release Payment" on an unverified milestone would only
               produce an error from the database, which enforces the order. */}
-          {/* PRD 5.3.4: a release above the threshold needs a second sign-off
-              from someone other than the verifier. Shown as its own step,
-              because burying it inside "Release Payment" would let the person
-              clicking believe one approval was enough. */}
-          {menuFor?.statusKey === 'approved' &&
-          menuFor.needsSecondApproval &&
-          !menuFor.secondApprovedAt ? (
-            <>
-              <button
-                type="button"
-                disabled={advancing}
-                onClick={() => secondApprove(menuFor)}
-                className="focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] font-semibold text-brand-ink transition-colors hover:bg-brand-50 disabled:opacity-50"
-              >
-                {advancing ? 'Working…' : 'Record Second Approval'}
-              </button>
-              <p className="px-3 pb-1 pt-0.5 text-[11.5px] leading-snug text-ink-3">
-                {rupees(menuFor.amount)} is above the{' '}
-                {rupees(DUAL_APPROVAL_THRESHOLD)} dual-approval threshold. The
-                second approval must come from someone other than whoever
-                verified it.
-              </p>
-            </>
-          ) : menuFor && MILESTONE_ACTIONS[menuFor.statusKey] ? (
+          {/* Only the PM's own step. Approving the release and paying it are
+              the customer's, and the customer has their own app — offering
+              them here would let one person walk a payment through a chain
+              that exists to need two. */}
+          {menuFor && MILESTONE_ACTIONS[menuFor.statusKey] ? (
             <button
               type="button"
               disabled={advancing}
@@ -868,9 +770,9 @@ export default function Finance() {
             </button>
           ) : null}
 
-          {menuFor?.statusKey === 'approved' && menuFor.secondApprovedAt ? (
-            <p className="px-3 pb-1 text-[11.5px] leading-snug text-success">
-              Second approval recorded.
+          {menuFor?.statusKey === 'approved' ? (
+            <p className="px-3 py-2.5 text-[13px] text-ink-2">
+              Verified. Waiting on the customer to approve the release.
             </p>
           ) : null}
 

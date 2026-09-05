@@ -78,7 +78,7 @@ export default function GanttChart({ groups = [], months = [], today = null, onT
         <div style={{ minWidth: `${760 * zoom}px` }}>
           {/* ---------- header ------------------------------------------- */}
           <div className="flex border-b border-line">
-            <div className="flex w-[230px] shrink-0 items-center justify-between border-r border-line px-4 py-3">
+            <div className="flex w-[270px] shrink-0 items-center justify-between border-r border-line px-4 py-3">
               <span className="eyebrow">Task Hierarchy</span>
               <ChevronRight className="size-3.5 rotate-90 text-ink-4" />
             </div>
@@ -122,7 +122,7 @@ export default function GanttChart({ groups = [], months = [], today = null, onT
               <div
                 className="pointer-events-none absolute bottom-0 top-0 z-20 w-px bg-violet-bar"
                 style={{
-                  left: `calc(230px + (100% - 230px) * ${
+                  left: `calc(270px + (100% - 270px) * ${
                     today.offset / TOTAL_WEEKS
                   })`,
                 }}
@@ -141,7 +141,7 @@ export default function GanttChart({ groups = [], months = [], today = null, onT
                     type="button"
                     onClick={() => toggle(group.id)}
                     aria-expanded={!!open[group.id]}
-                    className="focus-ring flex w-[230px] shrink-0 items-center gap-1.5 border-r border-line px-4 py-3 text-left transition-colors hover:bg-canvas"
+                    className="focus-ring flex w-[270px] shrink-0 items-center gap-1.5 border-r border-line px-4 py-3 text-left transition-colors hover:bg-canvas"
                   >
                     <ChevronRight
                       className={cn(
@@ -177,7 +177,7 @@ export default function GanttChart({ groups = [], months = [], today = null, onT
                         <button
                           type="button"
                           onClick={() => onTaskClick?.(task)}
-                          className="focus-ring flex w-[230px] shrink-0 items-center justify-between gap-2 border-r border-line py-3 pl-9 pr-3 text-left transition-colors hover:bg-canvas"
+                          className="focus-ring flex w-[270px] shrink-0 items-center justify-between gap-2 border-r border-line py-3 pl-9 pr-3 text-left transition-colors hover:bg-canvas"
                         >
                           <span className="truncate text-[13px] text-ink-2">
                             {task.name}
