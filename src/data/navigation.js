@@ -1,6 +1,5 @@
 import {
   LayoutGrid,
-  Compass,
   Folder,
   HardHat,
   Wallet,
@@ -15,9 +14,6 @@ import {
 export const primaryNav = [
   { label: 'Overview', to: '/dashboard', icon: LayoutGrid },
   { label: 'Projects', to: '/projects', icon: Folder },
-  /* PRD's BUILD order puts Blueprint (Design) first among the four
-     modules, ahead of Construction. */
-  { label: 'Design', to: '/design', icon: Compass },
   { label: 'Construction', to: '/construction', icon: HardHat },
   { label: 'Finance', to: '/finance', icon: Wallet },
   { label: 'Schedule', to: '/schedule', icon: CalendarDays },
@@ -37,10 +33,8 @@ export const secondaryNav = [
  * Analytics ask about tasks and people.
  */
 export const searchPlaceholders = {
-  '/home': 'Search projects, documents, or alerts...',
   '/dashboard': 'Search projects, documents, or alerts...',
   '/projects': 'Search projects, documents, or alerts...',
-  '/design': 'Search plans, rooms, or Vastu zones...',
   '/construction': 'Search projects, documents, or alerts...',
   '/finance': 'Search projects, documents, or alerts...',
   '/schedule': 'Search tasks, milestones, or people...',

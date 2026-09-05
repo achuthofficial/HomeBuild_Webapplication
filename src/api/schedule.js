@@ -20,14 +20,12 @@ const BADGES = {
   on_hold: { label: 'ON HOLD', tone: 'neutral' },
 }
 
-/* PRD 5.4.5 names the three overlays: baseline blue, ACTUAL GREEN, forecast
-   violet. So the actual bar is green wherever work is real, and the exception
-   is a phase in trouble — a delay is worth more than colour consistency. The
-   status chip beside each row still carries the precise state. */
+/* Bar colours from the mockup (scripts/eeeee.png): green for completed,
+   violet for work in progress, red for a phase that has slipped. */
 const BAR_TONES = {
   done: 'success',
-  in_progress: 'success',
-  critical: 'danger',
+  in_progress: 'violet',
+  critical: 'violet',
   delayed: 'danger',
   queued: 'neutral',
   on_hold: 'neutral',

@@ -220,15 +220,16 @@ export default function Analytics() {
               variant="outline"
               icon={RefreshCw}
               onClick={() => {
-                /* This used to raise a toast claiming the detection models had
-                   re-synced and found nothing. Nothing was re-synced; there is
-                   no model in this build. It refetches, which is what a
-                   refresh button should do. */
+                /* The mockup's "Refresh Sync". It used to raise a toast
+                   claiming the detection models had re-synced and found
+                   nothing — nothing was re-synced, there is no model in this
+                   build. It refetches, which is what the button can honestly
+                   do. */
                 alertsQuery.refetch()
                 kpisQuery.refetch()
               }}
             >
-              Refresh
+              Refresh Sync
             </Button>
             <Button
               variant="primary"

@@ -477,16 +477,18 @@ export default function Construction() {
           <Card className="p-5">
             <div className="flex items-center gap-2">
               <TriangleAlert className="size-4 text-brand-ink" strokeWidth={2} />
-              <h2 className="text-[15px] font-semibold text-ink">Open Findings</h2>
+              <h2 className="text-[15px] font-semibold text-ink">AI Insights</h2>
             </div>
 
-            {/* This rail used to be headed "AI Insights" and render two fixed
-                cards about an MEP clash and forecast rain, with buttons that
-                admitted they were not wired up. These are the project's real
-                open alerts, worst severity first. The CV pipeline that is
-                meant to raise them is out of scope, so today they come from
-                the seed or from a PM logging one by hand. */}
-            <p className="eyebrow mt-4">Quality issues awaiting action</p>
+            {/* Heading and section label are the mockup's (scripts/ccccc.png).
+                Its CONTENT was two fixed cards about an MEP clash and
+                forecast rain, with buttons that admitted they were not wired
+                up — a mockup showing demo data is not an instruction to keep
+                the data fake. These are the project's real open alerts, worst
+                severity first. The CV pipeline meant to raise them is out of
+                scope, so today they come from the seed or from a PM logging
+                one by hand. */}
+            <p className="eyebrow mt-4">Detected Potential Issues</p>
 
             {findings.isLoading ? (
               <div className="mt-3">
@@ -565,9 +567,10 @@ export default function Construction() {
               ))}
             </ul>
 
-            {/* Exports the feed as it is filtered on screen. It used to say
-                "Report queued. It will appear in Analytics." — nothing was
-                queued and nothing appeared. */}
+            {/* The mockup's "Generate Report" button. It used to raise a toast
+                saying "Report queued. It will appear in Analytics." — nothing
+                was queued and nothing appeared. It exports the feed as
+                filtered on screen. */}
             <Button
               variant="outline"
               iconRight={ArrowRight}
@@ -593,7 +596,7 @@ export default function Construction() {
                 toast(`Exported ${count} update${count === 1 ? '' : 's'} as CSV.`)
               }}
             >
-              Export Site Log
+              Generate Report
             </Button>
           </Card>
         </aside>

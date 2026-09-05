@@ -8,13 +8,12 @@
 
 export const TOTAL_WEEKS = 12
 
-/* The three overlays PRD 5.4.5 asks for, plus the delayed state — a red bar
-   on the chart needs a key entry or it reads as an unexplained colour. */
+/* Verbatim from the mockup (scripts/eeeee.png). */
 export const ganttLegend = [
-  { label: 'Actual', tone: 'success', kind: 'block' },
-  { label: 'Delayed', tone: 'danger', kind: 'block' },
+  { label: 'Completed', tone: 'success', kind: 'block' },
+  { label: 'In Progress', tone: 'violet', kind: 'block' },
   { label: 'Baseline Plan', tone: 'baseline', kind: 'rule' },
-  { label: 'Forecast', tone: 'forecast', kind: 'dashed' },
+  { label: 'Forecasted', tone: 'forecast', kind: 'dashed' },
 ]
 
 export const scheduleViews = ['Gantt', 'List', 'Board']

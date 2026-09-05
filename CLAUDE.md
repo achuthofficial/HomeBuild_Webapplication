@@ -30,28 +30,71 @@ Where a workflow spans apps — a milestone needs PM verification *then*
 customer approval — this app implements the PM's half and **shows** the other
 half as status, not as a button.
 
-## Known scope drift to resolve
+## Resolved: what was removed
 
-Built before that constraint was known, and now questionable here:
+The Design screen and the Compass home screen were built from the PRD before
+the manager-only scope was known, and are **gone from this app** — absent from
+every mockup, and customer-facing by the PRD's own wording.
 
-- `src/pages/Compass.jsx` + `src/router/Landing.jsx` — the customer's home
-  screen, and role-based routing to it.
-- "New Update" / "Post Update" on Construction — the supervisor's job.
-- `src/lib/offlineQueue.js`, `public/sw.js`, the 1080p compression in
-  `src/lib/storage.js` — all built for the supervisor persona on a bad site
-  connection. A PM on a laptop does not need them.
-- `MILESTONE_ACTIONS` in `src/api/finance.js` — includes the customer's
-  approval step alongside the PM's.
+Their engine is deliberately kept, because the customer app will need exactly
+it: `src/lib/vastu.js`, `src/lib/planValidation.js`, `src/lib/planGenerator.js`,
+`src/components/design/FloorPlanSvg.jsx`, `src/api/design.js`, and the
+`floor_plans` table with `select_floor_plan()`.
 
-Do not delete any of it without asking. Some may be worth keeping as a
-read-only or admin-override view.
+## Still questionable here
 
-## Design
+Built for the wrong audience, not yet resolved — ask before changing:
 
-The UI follows supplied design mockups. **If a mockup exists for a screen, it
-wins over invention.** Ask for the mockup rather than guessing, and do not add
-navigation items, screens or icons that are not in the design — that has
-already caused rework once (a "Home" nav item added unasked, then removed).
+- "New Update" / "Post Update" on Construction. The mockup HAS this button, so
+  the design says it belongs; the supervisor app filing the update says it
+  does not. Unresolved.
+- `src/lib/offlineQueue.js`, `public/sw.js`, and the 1080p compression in
+  `src/lib/storage.js` — built for the supervisor on a bad site connection. A
+  PM on a laptop does not need them. Harmless, but dead weight here.
+- `MILESTONE_ACTIONS` in `src/api/finance.js` includes the customer's approval
+  step. This app should arguably offer only the PM's verification and show the
+  customer's approval as status.
+- "Log Alert" on the Alerts screen is NOT in the mockup. It was added because
+  the CV pipeline is out of scope and without it no alert can ever be created
+  in this build. Remove it once alerts arrive from somewhere real.
+
+## Design mockups
+
+Eight PNGs in `scripts/` are the UI specification. **If a mockup exists for a
+screen, it wins over invention** — do not add navigation items, screens or
+icons that are not in them.
+
+| File | Screen |
+|---|---|
+| `aaaa.png` | Executive Dashboard (Overview) |
+| `bbbbb.png` | Project Portfolio |
+| `ccccc.png` | Daily Site Feed (Construction) |
+| `ddddd.png` | Financial Overview |
+| `eeeee.png` | Master Construction Schedule |
+| `fffff.png` | Contractor Management |
+| `gggggg.png` | AI Alert Management |
+| `hhhhh.png` | Settings |
+
+**The sidebar is seven items:** Overview, Projects, Construction, Finance,
+Schedule, Contractors, Analytics. Every mockup agrees. There is **no Design
+entry and no Compass home screen** — consistent with this being the PM's app,
+since PRD 5.1's user stories are all written "As a homeowner…".
+
+### Where the mockups and the PRD disagree
+
+Both are authoritative and they conflict in places. Resolved conflicts are
+recorded here so they are not re-litigated:
+
+| Topic | Mockup says | PRD says |
+|---|---|---|
+| Gantt legend | Completed / In Progress / Baseline Plan / Forecasted | 5.4.5: baseline **blue**, actual **green**, forecast **violet** |
+| Gantt baseline bar | grey | blue |
+| Today marker | violet | 5.4.5: **red**, updating daily |
+| Finance categories | Construction Materials / Permits & Legal / Labor & Subcontracting | 5.3.2: six fixed categories, Civil 48% … Contingency 10% |
+| Construction rail | "AI Insights", invented findings | 5.2.3: CV alert categories |
+
+A mockup showing static demo content is **not** an instruction to keep the
+data fake. Match its layout, labels and structure; fill it with real data.
 
 ## The stack, briefly
 

@@ -12,13 +12,15 @@ const barTones = {
   neutral: 'bg-line-strong',
 }
 
-/* PRD 5.4.5 names the three overlays by colour: baseline blue, actual green,
-   forecast violet. */
+/* The mockup's palette (scripts/eeeee.png) rather than PRD 5.4.5's wording.
+   The two disagree — the document says baseline blue and a red today line —
+   and the design was chosen as the tie-break. All three overlays the PRD
+   requires are still drawn at once; only their colours come from the mockup. */
 const legendSwatch = {
   success: 'bg-success',
-  danger: 'bg-danger-bar',
-  baseline: 'bg-brand-400',
-  forecast: 'border border-dashed border-violet bg-transparent',
+  violet: 'bg-violet-bar',
+  baseline: 'bg-ink-2',
+  forecast: 'border border-dashed border-ink-4 bg-transparent',
 }
 
 /** Convert a week offset into a percentage of the 12-column track. */
@@ -37,7 +39,7 @@ function Bar({ bar, forecast, flag }) {
 
       {forecast ? (
         <div
-          className="absolute top-1/2 h-[11px] -translate-y-1/2 rounded-[3px] border border-dashed border-violet"
+          className="absolute top-1/2 h-[11px] -translate-y-1/2 rounded-[3px] border border-dashed border-ink-4"
           style={{
             left: toPct(forecast.start),
             width: toPct(forecast.end - forecast.start),
@@ -111,21 +113,21 @@ export default function GanttChart({ groups = [], months = [], today = null, onT
 
           {/* ---------- rows --------------------------------------------- */}
           <div className="relative">
-            {/* Today marker, spanning every row. PRD 5.4.5 asks for a red
-                vertical line that updates daily; it is computed from the
-                project's start date. Null when the project has no start date
-                or today falls outside the window — better no line than one
-                drawn on a guess. */}
+            {/* Today marker, spanning every row. Violet, per the mockup —
+                PRD 5.4.5 asks for red, and the design won the tie-break. It
+                is still computed from the project's start date rather than
+                hard-coded, and is null when the project has no start date or
+                today falls outside the window. */}
             {today ? (
               <div
-                className="pointer-events-none absolute bottom-0 top-0 z-20 w-px bg-danger"
+                className="pointer-events-none absolute bottom-0 top-0 z-20 w-px bg-violet-bar"
                 style={{
                   left: `calc(230px + (100% - 230px) * ${
                     today.offset / TOTAL_WEEKS
                   })`,
                 }}
               >
-                <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[4px] bg-danger px-1.5 py-[3px] text-[9px] font-bold uppercase tracking-[0.05em] text-white">
+                <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[4px] bg-violet-bar px-1.5 py-[3px] text-[9px] font-bold uppercase tracking-[0.05em] text-white">
                   {today.label}
                 </span>
               </div>
@@ -156,7 +158,7 @@ export default function GanttChart({ groups = [], months = [], today = null, onT
                   <div className="relative min-h-[44px] flex-1">
                     <GridLines />
                     <div
-                      className="absolute top-1/2 h-[7px] -translate-y-1/2 rounded-[2px] bg-brand-400"
+                      className="absolute top-1/2 h-[7px] -translate-y-1/2 rounded-[2px] bg-ink-2"
                       style={{
                         left: toPct(group.baseline.start),
                         width: toPct(group.baseline.end - group.baseline.start),
