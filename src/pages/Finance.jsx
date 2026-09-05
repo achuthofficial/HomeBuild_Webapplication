@@ -24,6 +24,7 @@ import { Wallet, Banknote, PiggyBank } from 'lucide-react'
 import {
   MILESTONE_ACTIONS,
   advanceMilestone,
+  secondApproveMilestone,
   createMilestone,
   listContractorOptions,
   resolveProjectRef,
@@ -33,6 +34,8 @@ import {
   listExpenseCategories,
   recordExpense,
   listMilestones,
+  listExpenses,
+  DUAL_APPROVAL_THRESHOLD,
 } from '@/api/finance'
 import { listProjectOptions } from '@/api/siteFeed'
 
@@ -188,6 +191,16 @@ export default function Finance() {
     [projectId],
     { enabled: Boolean(projectId) },
   )
+  /* recordExpense() had a matching reader — listExpenses() — that nothing
+     ever called. A manager could log a purchase against a category and it
+     would count toward budget_consumed (the donut and trend chart both read
+     it), but the entry itself was gone the moment the modal closed: no list
+     anywhere showed what was recorded, for how much, or with whom. */
+  const expenses = useQuery(
+    () => listExpenses(projectId, 8),
+    [projectId],
+    { enabled: Boolean(projectId) },
+  )
 
   /* getCostCategories returns the categories plus any spending that names no
      category; the donut wants only the categories. */
@@ -245,11 +258,13 @@ export default function Finance() {
         note: '',
       })
       toast('Spending recorded.')
-      /* Three things move: the category bar, the trend, and the KPI the
-         database recalculated when the row landed. */
+      /* Four things move: the category bar, the trend, the KPI the database
+         recalculated when the row landed, and the Recent Spending list this
+         row itself now belongs in. */
       categories.refetch()
       trend.refetch()
       summary.refetch()
+      expenses.refetch()
     } catch (error) {
       setExpenseError(error.message)
     } finally {
@@ -294,6 +309,29 @@ export default function Finance() {
       milestones.refetch()
       /* A paid milestone changes budget_consumed via a trigger. */
       summary.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setAdvancing(false)
+    }
+  }
+
+  /*
+   * PRD 5.3.4's dual approval: a release over ₹5,00,000 needs a second
+   * sign-off before the customer can pay it. The database has enforced this
+   * from the start — advanceMilestone() refuses "approved -> paid" above the
+   * threshold until second_approval_at is set — but nothing in this screen
+   * ever called secondApproveMilestone(), so every release over the
+   * threshold reached "approved" and then had no way forward. This was the
+   * only step missing.
+   */
+  const secondApprove = async (milestone) => {
+    setAdvancing(true)
+    try {
+      await secondApproveMilestone(milestone.id)
+      setMenuFor(null)
+      toast(`Second approval recorded for “${milestone.milestone}”.`)
+      milestones.refetch()
     } catch (error) {
       toast(error.message, { tone: 'info' })
     } finally {
@@ -485,9 +523,19 @@ export default function Finance() {
                     {rupees(row.amount)}
                   </td>
                   <td className="px-5 py-4">
-                    <Chip tone={row.status.tone} uppercase={false}>
-                      {row.status.label}
-                    </Chip>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Chip tone={row.status.tone} uppercase={false}>
+                        {row.status.label}
+                      </Chip>
+                      {/* Visible before the row is even opened — a release
+                          stuck on this needs a different manager, not the one
+                          who verified it, so it is worth flagging on sight. */}
+                      {row.statusKey === 'approved' &&
+                      row.needsSecondApproval &&
+                      !row.secondApprovedAt ? (
+                        <Chip tone="warning">2nd approval needed</Chip>
+                      ) : null}
+                    </div>
                   </td>
                   <td className="px-5 py-4">
                     <button
@@ -503,6 +551,65 @@ export default function Finance() {
               ))}
             </tbody>
           </table>
+        </div>
+      </Card>
+
+      {/* ---------------- recent spending ---------------- */}
+      <Card className="mt-4 p-5">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-[17px] font-semibold text-ink">Recent Spending</h2>
+          <Button
+            variant="outline"
+            size="sm"
+            icon={Plus}
+            onClick={() => setExpenseOpen(true)}
+          >
+            Record Spending
+          </Button>
+        </div>
+
+        <div className="mt-4">
+          <QueryBoundary
+            isLoading={expenses.isLoading}
+            error={expenses.error}
+            data={expenses.data}
+            onRetry={expenses.refetch}
+            emptyTitle="Nothing recorded yet"
+            emptyBody="Record Spending logs a purchase against a category — it'll show up here."
+            skeleton={<RowSkeleton rows={3} />}
+          >
+            <ul className="space-y-3">
+              {(expenses.data ?? []).map((e) => (
+                <li
+                  key={e.id}
+                  className="flex items-start justify-between gap-3 border-b border-line pb-3 last:border-b-0"
+                >
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-1.5 text-[13px] font-medium text-ink">
+                      {e.vendor === '—' ? e.category : `${e.vendor} · ${e.category}`}
+                      {/* An escrow release posts its own line when the milestone
+                          is paid — flagged so it doesn't read as a second,
+                          separate purchase in the same list. */}
+                      {e.isEscrow ? (
+                        <Chip tone="brand" className="shrink-0">
+                          Escrow
+                        </Chip>
+                      ) : null}
+                    </p>
+                    {e.note ? (
+                      <p className="mt-0.5 truncate text-[11.5px] text-ink-3">
+                        {e.note}
+                      </p>
+                    ) : null}
+                    <p className="mt-0.5 text-[11px] text-ink-4">{longDate(e.date)}</p>
+                  </div>
+                  <span className="tnum shrink-0 text-[13px] font-semibold text-ink">
+                    {rupees(e.amount)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </QueryBoundary>
         </div>
       </Card>
 
@@ -805,9 +912,29 @@ export default function Finance() {
             </button>
           ) : null}
 
-          {menuFor?.statusKey === 'approved' ? (
+          {menuFor?.statusKey === 'approved' &&
+          menuFor.needsSecondApproval &&
+          !menuFor.secondApprovedAt ? (
+            <>
+              <p className="px-3 pb-1.5 pt-2.5 text-[13px] text-ink-2">
+                Verified. This release is over {rupees(DUAL_APPROVAL_THRESHOLD)}{' '}
+                and needs sign-off from someone other than whoever verified it
+                before the customer can pay it.
+              </p>
+              <button
+                type="button"
+                disabled={advancing}
+                onClick={() => secondApprove(menuFor)}
+                className="focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] font-semibold text-brand-ink transition-colors hover:bg-brand-50 disabled:opacity-50"
+              >
+                {advancing ? 'Working…' : 'Record Second Approval'}
+              </button>
+            </>
+          ) : menuFor?.statusKey === 'approved' ? (
             <p className="px-3 py-2.5 text-[13px] text-ink-2">
-              Verified. Waiting on the customer to approve the release.
+              {menuFor.needsSecondApproval
+                ? 'Verified and second-approved. Waiting on the customer to approve the release.'
+                : 'Verified. Waiting on the customer to approve the release.'}
             </p>
           ) : null}
 

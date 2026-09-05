@@ -416,8 +416,18 @@ export default function SettingsPage() {
               id="set-lang"
               value={language}
               onChange={(e) => {
+                /* The picker lists the PRD's eleven target languages, but
+                   translating the interface is out of scope for this build —
+                   see CLAUDE.md. It used to claim success on every change
+                   ("Interface language set to Hindi") while the screen stayed
+                   in English, which reads as a bug rather than a stated gap. */
                 setLanguage(e.target.value)
-                toast(`Interface language set to ${e.target.value}.`)
+                if (e.target.value !== languages[0]) {
+                  toast(
+                    `${e.target.value.replace(/\s*\(.*\)/, '')} isn't available in this build yet — the interface stays in English.`,
+                    { tone: 'info' },
+                  )
+                }
               }}
               className="focus-ring h-9 w-full max-w-xs rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
             >
@@ -425,6 +435,11 @@ export default function SettingsPage() {
                 <option key={l}>{l}</option>
               ))}
             </select>
+            {language !== languages[0] ? (
+              <p className="mt-1.5 text-[11.5px] text-ink-3">
+                Shown in English until this language ships.
+              </p>
+            ) : null}
           </div>
 
           <div className="mt-5">

@@ -255,7 +255,11 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
 
         <button
           type="button"
-          onClick={() => toast('Messages are not wired up in this prototype.', { tone: 'info' })}
+          onClick={() =>
+            toast('Direct messaging is not built yet — reach a colleague from Support.', {
+              tone: 'info',
+            })
+          }
           aria-label="Messages"
           className="focus-ring rounded-[8px] p-2 text-ink-2 transition-colors hover:bg-subtle"
         >

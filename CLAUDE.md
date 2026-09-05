@@ -126,8 +126,10 @@ both. Check the actual page.
 ## Not implemented, deliberately
 
 AI floor plan generation, computer-vision quality checks, RazorpayX escrow and
-KYC, push notifications, and the eleven-language UI. Each is either out of
-scope or needs credentials/infrastructure this repo does not have. See
+KYC, push notifications, direct messaging between users, and the eleven-
+language UI. Each is either out of scope or needs credentials/infrastructure
+this repo does not have. The topbar's language picker and message icon are
+both honest about this — they say so rather than pretending to work. See
 `supabase/README.md` for the one open security decision (the `profiles`
 directory is readable by any signed-in user).
 
