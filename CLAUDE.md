@@ -126,12 +126,48 @@ both. Check the actual page.
 ## Not implemented, deliberately
 
 AI floor plan generation, computer-vision quality checks, RazorpayX escrow and
-KYC, push notifications, direct messaging between users, and the eleven-
-language UI. Each is either out of scope or needs credentials/infrastructure
-this repo does not have. The topbar's language picker and message icon are
-both honest about this — they say so rather than pretending to work. See
-`supabase/README.md` for the one open security decision (the `profiles`
-directory is readable by any signed-in user).
+KYC, push notifications, and direct messaging between users. Each is either out
+of scope or needs credentials/infrastructure this repo does not have. The
+topbar's message icon is honest about this — it says so rather than pretending
+to work. See `supabase/README.md` for the one open security decision (the
+`profiles` directory is readable by any signed-in user).
+
+## The language picker is live, and translates on the device
+
+Settings' language picker used to be in the list above. It now works, and the
+mechanism is worth knowing before adding a string.
+
+There are **no per-language files**. `src/i18n/strings.js` holds the English
+text and is the only authored language; `src/i18n/translator.js` produces the
+rest at runtime through **Chrome's built-in Translator API** — an on-device
+model, no API key, no server, and no text leaving the machine. Project and
+client names pass through these screens, so shipping them to a hosted
+translation endpoint to localise a button was not the trade to make.
+
+Consequences to design around:
+
+- **Chrome 138+ / Edge 148+, desktop only.** Firefox, Safari and every mobile
+  browser have no equivalent, so `canTranslate` is false there and the app
+  stays in English and says why. `translateStrings` is the seam a hosted API
+  would drop into for those browsers.
+- **`Translator.create()` can hang forever** when the model host is
+  unreachable — it does not reject. It is raced against a timeout for exactly
+  that reason; do not remove it.
+- **Placeholders are substituted after translation.** A translation that loses
+  a `{name}` is rejected and the English is used, because a mangled
+  placeholder renders literal braces at the one spot that names the user.
+- Translation is asynchronous and may be partial. `t()` always has an English
+  answer and upgrades in place, so nothing ever renders a raw key.
+
+To localise a new string, add it to `strings.js` and call `t('its.key')`. It
+is translated into every supported language on the next pass — there is no
+second file to edit and nobody needs to write Telugu to ship a button.
+
+**Currently localised:** the sidebar, the topbar (including global search),
+every page header, and the whole of Settings. Page *bodies* — tables, dialogs,
+form fields on Projects, Finance, Schedule, Construction, Contractors and
+Analytics — are still English literals, and become translatable by moving
+their text into `strings.js`.
 
 ## Images
 

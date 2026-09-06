@@ -13,6 +13,7 @@ import { longDate, timeAgo } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
 import { useQuery } from '@/hooks/useQuery'
 import { useAuth } from '@/context/AuthContext'
+import { useTranslation } from '@/context/LanguageContext'
 import { downloadCsv } from '@/lib/csv'
 import {
   listAlerts,
@@ -78,6 +79,7 @@ function Severity({ level }) {
 export default function Analytics() {
   const { toast } = useToast()
   const { authUser } = useAuth()
+  const { t } = useTranslation()
   const [severity, setSeverity] = useState('All Levels')
   const [status, setStatus] = useState('Active Only')
   const [page, setPage] = useState(1)
@@ -132,8 +134,8 @@ export default function Analytics() {
   return (
     <>
       <PageHeader
-        title="AI Alert Management"
-        subtitle="Real-time structural monitoring and anomaly detection system."
+        title={t('page.analytics.title')}
+        subtitle={t('page.analytics.subtitle')}
         actions={
           <>
             <Button

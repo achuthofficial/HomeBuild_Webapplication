@@ -13,6 +13,7 @@ import Modal from '@/components/ui/Modal'
 import QueryBoundary, { KpiSkeleton, RowSkeleton } from '@/components/ui/QueryBoundary'
 import { cn } from '@/lib/cn'
 import { useToast } from '@/context/ToastContext'
+import { useTranslation } from '@/context/LanguageContext'
 import { useQuery } from '@/hooks/useQuery'
 import {
   listContractors,
@@ -59,6 +60,7 @@ const avatarTints = {
 
 export default function Contractors() {
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [tab, setTab] = useState('All')
   const [trade, setTrade] = useState('All Trades')
   const [minRating, setMinRating] = useState(false)
@@ -113,9 +115,9 @@ export default function Contractors() {
   return (
     <>
       <PageHeader
-        eyebrow="Resources"
-        title="Contractor Management"
-        subtitle="Directory of active verified partners and performance tracking."
+        eyebrow={t('page.contractors.eyebrow')}
+        title={t('page.contractors.title')}
+        subtitle={t('page.contractors.subtitle')}
         actions={
           <>
             <Segmented

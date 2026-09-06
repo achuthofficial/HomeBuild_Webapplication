@@ -14,10 +14,11 @@ import {
 import { cn } from '@/lib/cn'
 import Button from '@/components/ui/Button'
 import Avatar from '@/components/ui/Avatar'
-import { searchPlaceholders } from '@/data/navigation'
+import { searchPlaceholderKeys } from '@/data/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { useTheme } from '@/context/ThemeContext'
+import { useTranslation } from '@/context/LanguageContext'
 import { useQuery } from '@/hooks/useQuery'
 import { getOpenAlertCount } from '@/api/alerts'
 import { globalSearch } from '@/api/search'
@@ -28,6 +29,7 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
   const { user, signOut } = useAuth()
   const { toast } = useToast()
   const { resolvedTheme, toggleTheme } = useTheme()
+  const { t } = useTranslation()
 
   /* The bell's badge. Refetched on navigation rather than polled: acting on
      an alert always ends in a route change, and a timer here would fire on
@@ -49,8 +51,9 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef(null)
 
-  const placeholder =
-    searchPlaceholders[pathname] ?? 'Search projects, documents, or alerts...'
+  const placeholder = t(
+    searchPlaceholderKeys[pathname] ?? 'topbar.searchDocuments',
+  )
 
   useEffect(() => {
     if (!menuOpen) return undefined
@@ -146,7 +149,7 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
       <div ref={searchRef} className="relative min-w-0 flex-1 sm:max-w-sm">
         <form onSubmit={onSearch}>
           <label className="relative block">
-            <span className="sr-only">Search</span>
+            <span className="sr-only">{t('topbar.search')}</span>
             <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-4" />
             <input
               type="search"
@@ -175,12 +178,12 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
               <p className="px-4 py-3 text-[12.5px] text-danger">{results.error}</p>
             ) : results.total === 0 ? (
               <p className="px-4 py-3 text-[12.5px] text-ink-2">
-                Nothing matches “{results.term}”.
+                {t('topbar.noResults', { term: results.term })}
               </p>
             ) : (
               results.groups.map((group) => (
                 <div key={group.key} className="py-1">
-                  <p className="eyebrow px-4 pb-1 pt-1.5">{group.label}</p>
+                  <p className="eyebrow px-4 pb-1 pt-1.5">{t(group.labelKey)}</p>
                   {group.items.map((item) => (
                     <button
                       key={item.id}
@@ -208,7 +211,7 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
             "Searching…" over results that are already useful. */}
         {searching && !open ? (
           <p className="absolute left-4 top-[calc(100%+12px)] text-[11.5px] text-ink-4">
-            Searching…
+            {t('topbar.searching')}
           </p>
         ) : null}
       </div>
@@ -220,13 +223,13 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
           onClick={onCreateProject}
           className="hidden sm:inline-flex"
         >
-          Create New Project
+          {t('topbar.createProject')}
         </Button>
         <Button
           variant="primary"
           size="md"
           onClick={onCreateProject}
-          aria-label="Create new project"
+          aria-label={t('topbar.createProjectShort')}
           className="px-2.5 sm:hidden"
         >
           <Plus className="size-4" />
@@ -236,12 +239,14 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
           type="button"
           onClick={() => {
             if (openAlerts > 0) navigate('/analytics')
-            else toast('No open alerts.', { tone: 'info' })
+            else toast(t('topbar.noOpenAlerts'), { tone: 'info' })
           }}
           aria-label={
             openAlerts > 0
-              ? `${openAlerts} open alert${openAlerts === 1 ? '' : 's'}`
-              : 'Notifications — none open'
+              ? openAlerts === 1
+                ? t('topbar.openAlert')
+                : t('topbar.openAlerts', { count: openAlerts })
+              : t('topbar.notificationsNone')
           }
           className="focus-ring relative rounded-[8px] p-2 text-ink-2 transition-colors hover:bg-subtle"
         >
@@ -256,11 +261,9 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
         <button
           type="button"
           onClick={() =>
-            toast('Direct messaging is not built yet — reach a colleague from Support.', {
-              tone: 'info',
-            })
+            toast(t('topbar.messagingUnavailable'), { tone: 'info' })
           }
-          aria-label="Messages"
+          aria-label={t('topbar.messages')}
           className="focus-ring rounded-[8px] p-2 text-ink-2 transition-colors hover:bg-subtle"
         >
           <MessageSquare className="size-[18px]" strokeWidth={1.75} />
@@ -309,7 +312,9 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
                 ) : (
                   <Moon className="size-4" strokeWidth={1.75} />
                 )}
-                Switch to {resolvedTheme === 'dark' ? 'light' : 'dark'} mode
+                {resolvedTheme === 'dark'
+                  ? t('topbar.switchToLight')
+                  : t('topbar.switchToDark')}
               </button>
               <Link
                 to="/settings"
@@ -318,7 +323,7 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
                 className="flex w-full items-center gap-2.5 px-3 py-2 text-[13px] text-ink-2 transition-colors hover:bg-subtle"
               >
                 <User className="size-4" strokeWidth={1.75} />
-                Profile & Settings
+                {t('topbar.profileSettings')}
               </Link>
               <button
                 type="button"
@@ -331,7 +336,7 @@ export default function Topbar({ onMenuClick, onCreateProject }) {
                 className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] text-danger transition-colors hover:bg-danger-bg/50"
               >
                 <LogOut className="size-4" strokeWidth={1.75} />
-                Log Out
+                {t('topbar.logOut')}
               </button>
             </div>
           ) : null}

@@ -5,6 +5,7 @@ import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
+import { useTranslation } from '@/context/LanguageContext'
 
 /**
  * Where support actually goes.
@@ -63,6 +64,7 @@ const channels = [
 export default function Support() {
   const { profile } = useAuth()
   const { toast } = useToast()
+  const { t } = useTranslation()
 
   /* What a support agent needs to find the account and reproduce the report.
      The build id makes a stale cached bundle obvious straight away. */
@@ -91,9 +93,9 @@ export default function Support() {
   return (
     <>
       <PageHeader
-        eyebrow="Help"
-        title="Support"
-        subtitle="Three ways to reach us, and the account details worth including when you do."
+        eyebrow={t('page.support.eyebrow')}
+        title={t('page.support.title')}
+        subtitle={t('page.support.subtitle')}
       />
 
       <div className="grid gap-4 md:grid-cols-3">

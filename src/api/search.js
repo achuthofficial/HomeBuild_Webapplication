@@ -18,11 +18,11 @@ import { supabase, unwrap, requireConfigured } from '@/api/client'
 
 /** What each result type carries, so the dropdown can render and route it. */
 const GROUPS = [
-  { key: 'projects', label: 'Projects' },
-  { key: 'milestones', label: 'Milestones' },
-  { key: 'alerts', label: 'Alerts' },
-  { key: 'contractors', label: 'Contractors' },
-  { key: 'updates', label: 'Site Updates' },
+  { key: 'projects', labelKey: 'search.projects' },
+  { key: 'milestones', labelKey: 'search.milestones' },
+  { key: 'alerts', labelKey: 'search.alerts' },
+  { key: 'contractors', labelKey: 'search.contractors' },
+  { key: 'updates', labelKey: 'search.updates' },
 ]
 
 /**

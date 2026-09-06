@@ -32,6 +32,7 @@ import { FormMessage } from '@/components/auth/AuthForm'
 import { listOpenFindings } from '@/api/alerts'
 import { onImageError } from '@/lib/imageFallback'
 import { useAuth } from '@/context/AuthContext'
+import { useTranslation } from '@/context/LanguageContext'
 import { uploadSitePhoto } from '@/lib/storage'
 import { isStorageConfigured } from '@/lib/supabaseStorage'
 
@@ -50,6 +51,7 @@ const activityDots = {
 export default function Construction() {
   const { toast } = useToast()
   const { authUser } = useAuth()
+  const { t } = useTranslation()
   const [filter, setFilter] = useState('All Activity')
   const [updateOpen, setUpdateOpen] = useState(false)
   const [lightbox, setLightbox] = useState(null)
@@ -197,8 +199,8 @@ export default function Construction() {
   return (
     <>
       <PageHeader
-        title="Daily Site Feed"
-        subtitle="Real-time construction logs from site supervisors"
+        title={t('page.construction.title')}
+        subtitle={t('page.construction.subtitle')}
         actions={
           <>
             {/* Labelled "Filter Feed" per the mockup (scripts/ccccc.png). */}

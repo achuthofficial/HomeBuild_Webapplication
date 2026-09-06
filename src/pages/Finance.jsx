@@ -19,6 +19,7 @@ import { listActivity } from '@/api/activity'
 import { rupees, longDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
 import { useAuth } from '@/context/AuthContext'
+import { useTranslation } from '@/context/LanguageContext'
 import { useQuery } from '@/hooks/useQuery'
 import { Wallet, Banknote, PiggyBank } from 'lucide-react'
 import {
@@ -117,6 +118,7 @@ function FinanceKpi({ label, value, delta, note, icon: Icon, iconTone }) {
 export default function Finance() {
   const { toast } = useToast()
   const { authUser, user } = useAuth()
+  const { t } = useTranslation()
   const [range, setRange] = useState(trendRanges[0])
   const [invoiceOpen, setInvoiceOpen] = useState(false)
   const [menuFor, setMenuFor] = useState(null)
@@ -348,13 +350,15 @@ export default function Finance() {
   return (
     <>
       <PageHeader
-        title="Financial Overview"
+        title={t('page.finance.title')}
         /* Named the loaded project, not "Project Alpha" — which was a
            different project's name on every screen it appeared. */
         subtitle={
           summary.data?.projectName
-            ? `Budget, escrow and spend for ${summary.data.projectName}.`
-            : 'Budget, escrow and spend tracking.'
+            ? t('page.finance.subtitleNamed', {
+                project: summary.data.projectName,
+              })
+            : t('page.finance.subtitle')
         }
         actions={
           <>

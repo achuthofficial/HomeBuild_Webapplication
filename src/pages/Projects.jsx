@@ -15,6 +15,7 @@ import { estDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
 import { useQuery } from '@/hooks/useQuery'
 import { useAuth } from '@/context/AuthContext'
+import { useTranslation } from '@/context/LanguageContext'
 import Modal from '@/components/ui/Modal'
 import Avatar from '@/components/ui/Avatar'
 import {
@@ -68,6 +69,7 @@ export default function Projects() {
   const { openCreateProject, dataVersion } = useOutletContext()
   const { toast } = useToast()
   const { authUser } = useAuth()
+  const { t } = useTranslation()
   const [savingId, setSavingId] = useState(null)
   const [teamFor, setTeamFor] = useState(null)
   const [claiming, setClaiming] = useState(false)
@@ -237,12 +239,15 @@ export default function Projects() {
   return (
     <>
       <PageHeader
-        breadcrumbs={[{ label: 'Home', to: '/dashboard' }, { label: 'Active Projects' }]}
-        title="Project Portfolio"
+        breadcrumbs={[
+          { label: t('page.projects.home'), to: '/dashboard' },
+          { label: t('page.projects.breadcrumb') },
+        ]}
+        title={t('page.projects.title')}
         subtitle={
           projectsQuery.isLoading
-            ? 'Loading your portfolio…'
-            : `Manage and track progress across ${projects.length} construction sites.`
+            ? t('page.projects.loading')
+            : t('page.projects.subtitle', { count: projects.length })
         }
       />
 
