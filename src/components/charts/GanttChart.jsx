@@ -1,14 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronRight, ZoomIn, ZoomOut } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import Chip from '@/components/ui/Chip'
-import {
-  scheduleGroups,
-  scheduleMonths,
-  ganttLegend,
-  todayMarker,
-  TOTAL_WEEKS,
-} from '@/data/schedule'
+import { ganttLegend } from '@/data/schedule'
+import { TOTAL_WEEKS } from '@/api/schedule'
 
 const barTones = {
   success: 'bg-success',
@@ -17,6 +12,10 @@ const barTones = {
   neutral: 'bg-line-strong',
 }
 
+/* The mockup's palette (scripts/eeeee.png) rather than PRD 5.4.5's wording.
+   The two disagree — the document says baseline blue and a red today line —
+   and the design was chosen as the tie-break. All three overlays the PRD
+   requires are still drawn at once; only their colours come from the mockup. */
 const legendSwatch = {
   success: 'bg-success',
   violet: 'bg-violet-bar',
@@ -60,10 +59,15 @@ function Bar({ bar, forecast, flag }) {
   )
 }
 
-export default function GanttChart({ onTaskClick }) {
-  const [open, setOpen] = useState(() =>
-    Object.fromEntries(scheduleGroups.map((g) => [g.id, g.defaultOpen])),
-  )
+export default function GanttChart({ groups = [], months = [], today = null, onTaskClick }) {
+  /* Seeded from the data, and re-seeded when the group set changes — a lazy
+     initialiser alone would keep the first project's open/closed state after
+     navigating to another. */
+  const [open, setOpen] = useState({})
+
+  useEffect(() => {
+    setOpen(Object.fromEntries(groups.map((g) => [g.id, g.defaultOpen])))
+  }, [groups])
   const [zoom, setZoom] = useState(1)
 
   const toggle = (id) => setOpen((prev) => ({ ...prev, [id]: !prev[id] }))
@@ -74,14 +78,14 @@ export default function GanttChart({ onTaskClick }) {
         <div style={{ minWidth: `${760 * zoom}px` }}>
           {/* ---------- header ------------------------------------------- */}
           <div className="flex border-b border-line">
-            <div className="flex w-[230px] shrink-0 items-center justify-between border-r border-line px-4 py-3">
+            <div className="flex w-[270px] shrink-0 items-center justify-between border-r border-line px-4 py-3">
               <span className="eyebrow">Task Hierarchy</span>
               <ChevronRight className="size-3.5 rotate-90 text-ink-4" />
             </div>
 
             <div className="relative flex-1">
               <div className="flex">
-                {scheduleMonths.map((month) => (
+                {months.map((month) => (
                   <div
                     key={month.label}
                     className="flex-1 border-r border-line py-2 text-center last:border-r-0"
@@ -93,7 +97,7 @@ export default function GanttChart({ onTaskClick }) {
                 ))}
               </div>
               <div className="flex border-t border-line">
-                {scheduleMonths.flatMap((m) => m.weeks).map((week) => (
+                {months.flatMap((m) => m.weeks).map((week) => (
                   <div
                     key={week}
                     className="flex-1 border-r border-line py-1.5 text-center last:border-r-0"
@@ -109,21 +113,27 @@ export default function GanttChart({ onTaskClick }) {
 
           {/* ---------- rows --------------------------------------------- */}
           <div className="relative">
-            {/* today marker spans every row */}
-            <div
-              className="pointer-events-none absolute bottom-0 top-0 z-20 w-px bg-ink/70"
-              style={{
-                left: `calc(230px + (100% - 230px) * ${
-                  todayMarker.offset / TOTAL_WEEKS
-                })`,
-              }}
-            >
-              <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[4px] bg-ink px-1.5 py-[3px] text-[9px] font-bold uppercase tracking-[0.05em] text-canvas">
-                {todayMarker.label}
-              </span>
-            </div>
+            {/* Today marker, spanning every row. Violet, per the mockup —
+                PRD 5.4.5 asks for red, and the design won the tie-break. It
+                is still computed from the project's start date rather than
+                hard-coded, and is null when the project has no start date or
+                today falls outside the window. */}
+            {today ? (
+              <div
+                className="pointer-events-none absolute bottom-0 top-0 z-20 w-px bg-violet-bar"
+                style={{
+                  left: `calc(270px + (100% - 270px) * ${
+                    today.offset / TOTAL_WEEKS
+                  })`,
+                }}
+              >
+                <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[4px] bg-violet-bar px-1.5 py-[3px] text-[9px] font-bold uppercase tracking-[0.05em] text-white">
+                  {today.label}
+                </span>
+              </div>
+            ) : null}
 
-            {scheduleGroups.map((group) => (
+            {groups.map((group) => (
               <div key={group.id}>
                 {/* group row */}
                 <div className="flex border-b border-line">
@@ -131,7 +141,7 @@ export default function GanttChart({ onTaskClick }) {
                     type="button"
                     onClick={() => toggle(group.id)}
                     aria-expanded={!!open[group.id]}
-                    className="focus-ring flex w-[230px] shrink-0 items-center gap-1.5 border-r border-line px-4 py-3 text-left transition-colors hover:bg-canvas"
+                    className="focus-ring flex w-[270px] shrink-0 items-center gap-1.5 border-r border-line px-4 py-3 text-left transition-colors hover:bg-canvas"
                   >
                     <ChevronRight
                       className={cn(
@@ -167,7 +177,7 @@ export default function GanttChart({ onTaskClick }) {
                         <button
                           type="button"
                           onClick={() => onTaskClick?.(task)}
-                          className="focus-ring flex w-[230px] shrink-0 items-center justify-between gap-2 border-r border-line py-3 pl-9 pr-3 text-left transition-colors hover:bg-canvas"
+                          className="focus-ring flex w-[270px] shrink-0 items-center justify-between gap-2 border-r border-line py-3 pl-9 pr-3 text-left transition-colors hover:bg-canvas"
                         >
                           <span className="truncate text-[13px] text-ink-2">
                             {task.name}

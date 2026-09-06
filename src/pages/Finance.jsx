@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import { Download, Plus, MoreHorizontal, TrendingUp, TrendingDown } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
@@ -10,15 +11,54 @@ import Modal from '@/components/ui/Modal'
 import DonutChart from '@/components/charts/DonutChart'
 import AreaTrend from '@/components/charts/AreaTrend'
 import { cn } from '@/lib/cn'
+import QueryBoundary, { KpiSkeleton, Skeleton, RowSkeleton } from '@/components/ui/QueryBoundary'
+import { FormMessage } from '@/components/auth/AuthForm'
+import { downloadCsv } from '@/lib/csv'
+import { downloadMilestoneReceipt } from '@/lib/receipt'
+import { listActivity } from '@/api/activity'
 import { rupees, longDate } from '@/lib/format'
 import { useToast } from '@/context/ToastContext'
+import { useAuth } from '@/context/AuthContext'
+import { useQuery } from '@/hooks/useQuery'
+import { Wallet, Banknote, PiggyBank } from 'lucide-react'
 import {
-  financeKpis,
-  budgetTrend,
-  trendRanges,
-  categoryBreakdown,
-  milestonePayments,
-} from '@/data/finance'
+  MILESTONE_ACTIONS,
+  advanceMilestone,
+  secondApproveMilestone,
+  createMilestone,
+  listContractorOptions,
+  resolveProjectRef,
+  getFinanceSummary,
+  getBudgetTrend,
+  getCostCategories,
+  listExpenseCategories,
+  recordExpense,
+  listMilestones,
+  listExpenses,
+  DUAL_APPROVAL_THRESHOLD,
+} from '@/api/finance'
+import { listProjectOptions } from '@/api/siteFeed'
+
+export const trendRanges = ['Last 6 Months', 'Last 12 Months', 'Year to Date']
+
+/** How many months of spend each range asks the query for. */
+const RANGE_MONTHS = {
+  'Last 6 Months': 6,
+  'Last 12 Months': 12,
+  'Year to Date': new Date().getMonth() + 1,
+}
+
+/** KPI cards from the summary. Copy and icons stay client-side. */
+function buildKpis(s) {
+  return [
+    { id: 'total-budget', label: 'Total Budget', value: s.total,
+      delta: 2.4, icon: Wallet, iconTone: 'brand' },
+    { id: 'budget-consumed', label: 'Budget Consumed', value: s.consumed,
+      note: `${s.consumedPct}% Used`, icon: Banknote, iconTone: 'warning' },
+    { id: 'remaining', label: 'Remaining', value: s.remaining,
+      delta: -1.2, icon: PiggyBank, iconTone: 'violet' },
+  ]
+}
 
 /* Tile tints sampled from the mockup: #D8E2FF / #FEF5E7 / #F3EFFE. */
 const iconTones = {
@@ -76,21 +116,277 @@ function FinanceKpi({ label, value, delta, note, icon: Icon, iconTone }) {
 
 export default function Finance() {
   const { toast } = useToast()
+  const { authUser, user } = useAuth()
   const [range, setRange] = useState(trendRanges[0])
   const [invoiceOpen, setInvoiceOpen] = useState(false)
   const [menuFor, setMenuFor] = useState(null)
+  const [advancing, setAdvancing] = useState(false)
+  const [raising, setRaising] = useState(false)
+  const [ledgerOpen, setLedgerOpen] = useState(false)
+  const [invoiceError, setInvoiceError] = useState(null)
+  /* Declared up here with the rest of the state, not beside the modal it
+     drives: the categories query below reads it, and a `const` referenced
+     before its declaration is a temporal dead zone error, not a warning. */
+  const [expenseOpen, setExpenseOpen] = useState(false)
+  const [expenseError, setExpenseError] = useState(null)
+  const [savingExpense, setSavingExpense] = useState(false)
+  const [expense, setExpense] = useState({
+    categoryId: '',
+    amount: '',
+    incurredOn: new Date().toISOString().slice(0, 10),
+    vendor: '',
+    note: '',
+  })
+  const [invoice, setInvoice] = useState({
+    name: '',
+    amount: '',
+    dueDate: '',
+    contractorId: '',
+  })
+
+  /* AppLayout bumps this when Create New Project succeeds, from the topbar
+     that's reachable on every screen. */
+  const { dataVersion } = useOutletContext()
+
+  /* The finance screen is per-project. A link from the Projects card (or a
+     bookmark) names one in the URL; with none given this falls back to the
+     oldest active project, same as before the switcher below existed. The
+     dependent queries stay disabled until a project id lands either way. */
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedProjectId = searchParams.get('project')
+  const projectQuery = useQuery(
+    () => resolveProjectRef(requestedProjectId),
+    [requestedProjectId, dataVersion],
+  )
+  const projectId = projectQuery.data?.id ?? null
+
+  /* Every project the manager could switch to — keyed on dataVersion too, or
+     a project created while sitting on this screen would be invisible to the
+     switcher until a reload. */
+  const projectOptions = useQuery(() => listProjectOptions(), [dataVersion])
+  const switchProject = (name) => {
+    const match = projectOptions.data?.find((p) => p.name === name)
+    if (!match) return
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.set('project', match.id)
+        return next
+      },
+      { replace: true },
+    )
+  }
+
+  const summary = useQuery(
+    () => getFinanceSummary(projectId),
+    [projectId],
+    { enabled: Boolean(projectId) },
+  )
+  const trend = useQuery(
+    () => getBudgetTrend(projectId, RANGE_MONTHS[range] ?? 8),
+    [projectId, range],
+    { enabled: Boolean(projectId) },
+  )
+  const categories = useQuery(
+    () => getCostCategories(projectId),
+    [projectId],
+    { enabled: Boolean(projectId) },
+  )
+  const milestones = useQuery(
+    () => listMilestones(projectId),
+    [projectId],
+    { enabled: Boolean(projectId) },
+  )
+  /* recordExpense() had a matching reader — listExpenses() — that nothing
+     ever called. A manager could log a purchase against a category and it
+     would count toward budget_consumed (the donut and trend chart both read
+     it), but the entry itself was gone the moment the modal closed: no list
+     anywhere showed what was recorded, for how much, or with whom. */
+  const expenses = useQuery(
+    () => listExpenses(projectId, 8),
+    [projectId],
+    { enabled: Boolean(projectId) },
+  )
+
+  /* getCostCategories returns the categories plus any spending that names no
+     category; the donut wants only the categories. */
+  const categoryList = categories.data?.categories ?? []
+
+  const expenseCategories = useQuery(
+    () => listExpenseCategories(projectId),
+    [projectId],
+    { enabled: Boolean(projectId) && expenseOpen },
+  )
+  const contractorOptions = useQuery(() => listContractorOptions(), [], {
+    enabled: invoiceOpen,
+  })
+  /* Only fetched when the drawer opens — nobody reads the ledger every visit. */
+  const ledger = useQuery(
+    () => listActivity({ projectId, limit: 50 }),
+    [projectId, ledgerOpen],
+    { enabled: Boolean(projectId) && ledgerOpen },
+  )
+
+  /**
+   * Moves a milestone to its next state.
+   *
+   * The transition rules live in the database, so an illegal move comes back
+   * as an error rather than being silently allowed — this just surfaces it.
+   */
+  /**
+   * Records spending against a category (PRD 5.3.5).
+   *
+   * Escrow releases are not created here — they post themselves when a
+   * milestone is paid. This is the other half: the material purchases and
+   * fees that never pass through the escrow chain but still spend the budget.
+   */
+  const saveExpense = async (e) => {
+    e.preventDefault()
+    setExpenseError(null)
+    setSavingExpense(true)
+
+    try {
+      await recordExpense({
+        projectId,
+        categoryId: expense.categoryId,
+        amount: expense.amount,
+        incurredOn: expense.incurredOn,
+        vendor: expense.vendor,
+        note: expense.note,
+        actorUid: authUser?.uid,
+      })
+      setExpenseOpen(false)
+      setExpense({
+        categoryId: '',
+        amount: '',
+        incurredOn: new Date().toISOString().slice(0, 10),
+        vendor: '',
+        note: '',
+      })
+      toast('Spending recorded.')
+      /* Four things move: the category bar, the trend, the KPI the database
+         recalculated when the row landed, and the Recent Spending list this
+         row itself now belongs in. */
+      categories.refetch()
+      trend.refetch()
+      summary.refetch()
+      expenses.refetch()
+    } catch (error) {
+      setExpenseError(error.message)
+    } finally {
+      setSavingExpense(false)
+    }
+  }
+
+  const raiseInvoice = async (e) => {
+    e.preventDefault()
+    setInvoiceError(null)
+    setRaising(true)
+
+    try {
+      await createMilestone({
+        projectId,
+        name: invoice.name,
+        amount: invoice.amount,
+        dueDate: invoice.dueDate,
+        contractorId: invoice.contractorId || null,
+      })
+      setRaising(false)
+      setInvoiceOpen(false)
+      setInvoice({ name: '', amount: '', dueDate: '', contractorId: '' })
+      toast(`“${invoice.name}” raised and sent for verification.`)
+      milestones.refetch()
+    } catch (error) {
+      setRaising(false)
+      setInvoiceError(error.message)
+    }
+  }
+
+  const advance = async (milestone, nextStatus) => {
+    setAdvancing(true)
+    try {
+      await advanceMilestone(milestone.id, nextStatus)
+      setMenuFor(null)
+      toast(
+        nextStatus === 'paid'
+          ? `Payment released for “${milestone.milestone}”.`
+          : `“${milestone.milestone}” moved to ${nextStatus.replace(/_/g, ' ')}.`,
+      )
+      milestones.refetch()
+      /* A paid milestone changes budget_consumed via a trigger. */
+      summary.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setAdvancing(false)
+    }
+  }
+
+  /*
+   * PRD 5.3.4's dual approval: a release over ₹5,00,000 needs a second
+   * sign-off before the customer can pay it. The database has enforced this
+   * from the start — advanceMilestone() refuses "approved -> paid" above the
+   * threshold until second_approval_at is set — but nothing in this screen
+   * ever called secondApproveMilestone(), so every release over the
+   * threshold reached "approved" and then had no way forward. This was the
+   * only step missing.
+   */
+  const secondApprove = async (milestone) => {
+    setAdvancing(true)
+    try {
+      await secondApproveMilestone(milestone.id)
+      setMenuFor(null)
+      toast(`Second approval recorded for “${milestone.milestone}”.`)
+      milestones.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setAdvancing(false)
+    }
+  }
 
   return (
     <>
       <PageHeader
         title="Financial Overview"
-        subtitle="Real-time budget analysis and tracking for Project Alpha."
+        /* Named the loaded project, not "Project Alpha" — which was a
+           different project's name on every screen it appeared. */
+        subtitle={
+          summary.data?.projectName
+            ? `Budget, escrow and spend for ${summary.data.projectName}.`
+            : 'Budget, escrow and spend tracking.'
+        }
         actions={
           <>
+            {/* Hidden with one project — nothing to switch to. With several,
+                this is the only control that lets a manager look at any
+                project's finances but the oldest active one. */}
+            {(projectOptions.data?.length ?? 0) > 1 ? (
+              <FilterSelect
+                label="Project"
+                value={projectQuery.data?.name ?? '…'}
+                options={projectOptions.data.map((p) => p.name)}
+                onChange={switchProject}
+              />
+            ) : null}
             <Button
               variant="outline"
               icon={Download}
-              onClick={() => toast('Financial report exported as PDF.')}
+              onClick={() => {
+                const rows = milestones.data ?? []
+                const count = downloadCsv(
+                  'homebuild-milestones',
+                  [
+                    { key: 'milestone', label: 'Milestone' },
+                    { key: 'contractor', label: 'Contractor' },
+                    { key: 'dueDate', label: 'Due Date' },
+                    { key: 'amount', label: 'Amount (INR)' },
+                    { key: 'statusKey', label: 'Status' },
+                  ],
+                  rows,
+                )
+                toast(`Exported ${count} milestone${count === 1 ? '' : 's'} as CSV.`)
+              }}
             >
               Export Report
             </Button>
@@ -105,13 +401,31 @@ export default function Finance() {
         }
       />
 
-      <div className="grid gap-4 md:grid-cols-3">
-        {financeKpis.map((kpi) => (
-          <FinanceKpi key={kpi.id} {...kpi} />
-        ))}
-      </div>
+      <QueryBoundary
+        isLoading={projectQuery.isLoading || summary.isLoading}
+        error={projectQuery.error ?? summary.error}
+        data={summary.data}
+        onRetry={summary.refetch}
+        isEmpty={() => false}
+        skeleton={
+          <div className="grid gap-4 md:grid-cols-3">
+            {Array.from({ length: 3 }, (_, i) => (
+              <KpiSkeleton key={i} />
+            ))}
+          </div>
+        }
+      >
+        <div className="grid gap-4 md:grid-cols-3">
+          {(summary.data ? buildKpis(summary.data) : []).map((kpi) => (
+            <FinanceKpi key={kpi.id} {...kpi} />
+          ))}
+        </div>
+      </QueryBoundary>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+      {/* items-start: the category card grew a bar list under its donut, and
+          stretching the trend card to match left a tall empty panel beside
+          it. Each card keeps its own height instead. */}
+      <div className="mt-4 grid items-start gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <Card className="p-5">
           <CardHeader
             title="Budget Consumption Trend"
@@ -126,14 +440,40 @@ export default function Finance() {
             }
           />
           <div className="mt-5">
-            <AreaTrend data={budgetTrend} />
+            {projectQuery.isLoading || trend.isLoading ? (
+              <Skeleton className="h-[190px] w-full" />
+            ) : projectQuery.error ?? trend.error ? (
+              <p className="py-16 text-center text-[13px] text-danger">
+                {projectQuery.error ?? trend.error}
+              </p>
+            ) : (trend.data?.length ?? 0) < 2 ? (
+              <p className="py-16 text-center text-[13px] text-ink-2">
+                Not enough spend recorded yet to draw a trend.
+              </p>
+            ) : (
+              <AreaTrend data={trend.data} />
+            )}
           </div>
         </Card>
 
         <Card className="p-5">
-          <CardHeader title="Category Breakdown" />
+          <CardHeader
+            title="Category Breakdown"
+          />
           <div className="mt-5">
-            <DonutChart data={categoryBreakdown} />
+            {projectQuery.isLoading || categories.isLoading ? (
+              <Skeleton className="mx-auto h-[156px] w-[156px] rounded-full" />
+            ) : projectQuery.error ?? categories.error ? (
+              <p className="py-10 text-center text-[13px] text-danger">
+                {projectQuery.error ?? categories.error}
+              </p>
+            ) : categoryList.length === 0 ? (
+              <p className="py-10 text-center text-[13px] text-ink-2">
+                No cost categories recorded.
+              </p>
+            ) : (
+              <DonutChart data={categoryList} />
+            )}
           </div>
         </Card>
       </div>
@@ -146,7 +486,7 @@ export default function Finance() {
           </h2>
           <button
             type="button"
-            onClick={() => toast('Full payment ledger is not in this prototype.', { tone: 'info' })}
+            onClick={() => setLedgerOpen(true)}
             className="focus-ring rounded text-[12px] font-semibold text-brand-ink hover:underline"
           >
             View All
@@ -171,7 +511,7 @@ export default function Finance() {
               </tr>
             </thead>
             <tbody>
-              {milestonePayments.map((row) => (
+              {(milestones.data ?? []).map((row) => (
                 <tr
                   key={row.id}
                   className="border-b border-line last:border-b-0 transition-colors hover:bg-canvas/60"
@@ -189,9 +529,19 @@ export default function Finance() {
                     {rupees(row.amount)}
                   </td>
                   <td className="px-5 py-4">
-                    <Chip tone={row.status.tone} uppercase={false}>
-                      {row.status.label}
-                    </Chip>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Chip tone={row.status.tone} uppercase={false}>
+                        {row.status.label}
+                      </Chip>
+                      {/* Visible before the row is even opened — a release
+                          stuck on this needs a different manager, not the one
+                          who verified it, so it is worth flagging on sight. */}
+                      {row.statusKey === 'approved' &&
+                      row.needsSecondApproval &&
+                      !row.secondApprovedAt ? (
+                        <Chip tone="warning">2nd approval needed</Chip>
+                      ) : null}
+                    </div>
                   </td>
                   <td className="px-5 py-4">
                     <button
@@ -210,55 +560,333 @@ export default function Finance() {
         </div>
       </Card>
 
+      {/* ---------------- recent spending ---------------- */}
+      <Card className="mt-4 p-5">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-[17px] font-semibold text-ink">Recent Spending</h2>
+          <Button
+            variant="outline"
+            size="sm"
+            icon={Plus}
+            onClick={() => setExpenseOpen(true)}
+          >
+            Record Spending
+          </Button>
+        </div>
+
+        <div className="mt-4">
+          <QueryBoundary
+            isLoading={expenses.isLoading}
+            error={expenses.error}
+            data={expenses.data}
+            onRetry={expenses.refetch}
+            emptyTitle="Nothing recorded yet"
+            emptyBody="Record Spending logs a purchase against a category — it'll show up here."
+            skeleton={<RowSkeleton rows={3} />}
+          >
+            <ul className="space-y-3">
+              {(expenses.data ?? []).map((e) => (
+                <li
+                  key={e.id}
+                  className="flex items-start justify-between gap-3 border-b border-line pb-3 last:border-b-0"
+                >
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-1.5 text-[13px] font-medium text-ink">
+                      {e.vendor === '—' ? e.category : `${e.vendor} · ${e.category}`}
+                      {/* An escrow release posts its own line when the milestone
+                          is paid — flagged so it doesn't read as a second,
+                          separate purchase in the same list. */}
+                      {e.isEscrow ? (
+                        <Chip tone="brand" className="shrink-0">
+                          Escrow
+                        </Chip>
+                      ) : null}
+                    </p>
+                    {e.note ? (
+                      <p className="mt-0.5 truncate text-[11.5px] text-ink-3">
+                        {e.note}
+                      </p>
+                    ) : null}
+                    <p className="mt-0.5 text-[11px] text-ink-4">{longDate(e.date)}</p>
+                  </div>
+                  <span className="tnum shrink-0 text-[13px] font-semibold text-ink">
+                    {rupees(e.amount)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </QueryBoundary>
+        </div>
+      </Card>
+
       {/* ---------------- new invoice dialog ---------------- */}
       <Modal
         open={invoiceOpen}
         onClose={() => setInvoiceOpen(false)}
         title="New Invoice"
-        description="Raise an invoice against a verified milestone."
+        description="Raise a milestone release against this project."
         footer={
           <>
-            <Button variant="outline" onClick={() => setInvoiceOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setInvoiceOpen(false)}
+              disabled={raising}
+            >
               Cancel
             </Button>
             <Button
               variant="warning"
-              onClick={() => {
-                setInvoiceOpen(false)
-                toast('Invoice raised and sent for PM sign-off.')
-              }}
+              form="new-invoice-form"
+              type="submit"
+              disabled={raising}
             >
-              Raise Invoice
+              {raising ? 'Raising…' : 'Raise Invoice'}
             </Button>
           </>
         }
       >
-        <div className="space-y-4">
+        {/* In PRD terms an invoice IS a milestone release, so this creates one
+            rather than inventing a parallel concept that never reconciles. */}
+        <form id="new-invoice-form" onSubmit={raiseInvoice} className="space-y-4">
+          <FormMessage>{invoiceError}</FormMessage>
+
           <div>
-            <label htmlFor="inv-ms" className="eyebrow mb-1.5 block">
-              Milestone
+            <label htmlFor="inv-name" className="eyebrow mb-1.5 block">
+              Milestone Name
+            </label>
+            <input
+              id="inv-name"
+              value={invoice.name}
+              onChange={(e) => setInvoice((v) => ({ ...v, name: e.target.value }))}
+              placeholder="e.g. Roof Slab Sign-off"
+              required
+              disabled={raising}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="inv-contractor" className="eyebrow mb-1.5 block">
+              Contractor
             </label>
             <select
-              id="inv-ms"
-              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px]"
+              id="inv-contractor"
+              value={invoice.contractorId}
+              onChange={(e) =>
+                setInvoice((v) => ({ ...v, contractorId: e.target.value }))
+              }
+              disabled={raising}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
             >
-              {milestonePayments.map((m) => (
-                <option key={m.id}>{m.milestone}</option>
+              <option value="">Unassigned</option>
+              {(contractorOptions.data ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
               ))}
             </select>
           </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="inv-amt" className="eyebrow mb-1.5 block">
+                Amount (₹)
+              </label>
+              <input
+                id="inv-amt"
+                type="number"
+                min="1"
+                step="1000"
+                value={invoice.amount}
+                onChange={(e) =>
+                  setInvoice((v) => ({ ...v, amount: e.target.value }))
+                }
+                required
+                disabled={raising}
+                className="focus-ring tnum h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+              />
+            </div>
+            <div>
+              <label htmlFor="inv-due" className="eyebrow mb-1.5 block">
+                Due Date
+              </label>
+              <input
+                id="inv-due"
+                type="date"
+                value={invoice.dueDate}
+                onChange={(e) =>
+                  setInvoice((v) => ({ ...v, dueDate: e.target.value }))
+                }
+                disabled={raising}
+                className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+              />
+            </div>
+          </div>
+
+          <p className="text-[11.5px] leading-relaxed text-ink-3">
+            Raised milestones enter <strong>pending verification</strong>. The
+            release percentage is derived from the amount against the project
+            budget.
+          </p>
+        </form>
+      </Modal>
+
+      {/* ---------------- record spending (PRD 5.3.5) ---------------- */}
+      <Modal
+        open={expenseOpen}
+        onClose={() => setExpenseOpen(false)}
+        title="Record Spending"
+        description="Spending outside the escrow chain — materials, fees, hire."
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => setExpenseOpen(false)}
+              disabled={savingExpense}
+            >
+              Cancel
+            </Button>
+            <Button form="record-expense-form" type="submit" disabled={savingExpense}>
+              {savingExpense ? 'Saving…' : 'Record'}
+            </Button>
+          </>
+        }
+      >
+        <form id="record-expense-form" onSubmit={saveExpense} className="space-y-3.5">
+          <FormMessage>{expenseError}</FormMessage>
+
           <div>
-            <label htmlFor="inv-amt" className="eyebrow mb-1.5 block">
-              Amount (₹)
+            <label htmlFor="ex-cat" className="eyebrow mb-1.5 block">
+              Category
+            </label>
+            <select
+              id="ex-cat"
+              required
+              value={expense.categoryId}
+              onChange={(e) =>
+                setExpense((v) => ({ ...v, categoryId: e.target.value }))
+              }
+              disabled={savingExpense || expenseCategories.isLoading}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+            >
+              <option value="">
+                {expenseCategories.isLoading ? 'Loading…' : 'Choose a category'}
+              </option>
+              {(expenseCategories.data ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="ex-amt" className="eyebrow mb-1.5 block">
+                Amount (₹)
+              </label>
+              <input
+                id="ex-amt"
+                type="number"
+                min="1"
+                required
+                value={expense.amount}
+                onChange={(e) =>
+                  setExpense((v) => ({ ...v, amount: e.target.value }))
+                }
+                disabled={savingExpense}
+                className="focus-ring tnum h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+              />
+            </div>
+            <div>
+              <label htmlFor="ex-date" className="eyebrow mb-1.5 block">
+                Date
+              </label>
+              <input
+                id="ex-date"
+                type="date"
+                required
+                value={expense.incurredOn}
+                onChange={(e) =>
+                  setExpense((v) => ({ ...v, incurredOn: e.target.value }))
+                }
+                disabled={savingExpense}
+                className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="ex-vendor" className="eyebrow mb-1.5 block">
+              Vendor
             </label>
             <input
-              id="inv-amt"
-              type="number"
-              defaultValue={450000}
-              className="focus-ring tnum h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px]"
+              id="ex-vendor"
+              value={expense.vendor}
+              onChange={(e) =>
+                setExpense((v) => ({ ...v, vendor: e.target.value }))
+              }
+              disabled={savingExpense}
+              placeholder="Sri Lakshmi Electricals"
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
             />
           </div>
-        </div>
+
+          <div>
+            <label htmlFor="ex-note" className="eyebrow mb-1.5 block">
+              Note
+            </label>
+            <input
+              id="ex-note"
+              value={expense.note}
+              onChange={(e) => setExpense((v) => ({ ...v, note: e.target.value }))}
+              disabled={savingExpense}
+              placeholder="Conduit and wiring, ground floor"
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+            />
+          </div>
+
+          <p className="text-[11.5px] leading-relaxed text-ink-3">
+            Escrow releases are not recorded here — paying a milestone posts its
+            own ledger line automatically, so the two can never double-count.
+          </p>
+        </form>
+      </Modal>
+
+      {/* ---------------- payment ledger ---------------- */}
+      <Modal
+        open={ledgerOpen}
+        onClose={() => setLedgerOpen(false)}
+        title="Payment Ledger"
+        description="Every recorded milestone movement on this project."
+        size="lg"
+      >
+        <QueryBoundary
+          isLoading={ledger.isLoading}
+          error={ledger.error}
+          data={ledger.data}
+          onRetry={ledger.refetch}
+          emptyTitle="No payment activity yet"
+          emptyBody="Verifying or releasing a milestone records an entry here."
+          skeleton={<RowSkeleton rows={5} />}
+        >
+          <ol className="space-y-3">
+            {(ledger.data ?? []).map((entry) => (
+              <li
+                key={entry.id}
+                className="flex gap-3 border-b border-line pb-3 last:border-b-0"
+              >
+                <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-success" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] leading-snug text-ink">{entry.summary}</p>
+                  <p className="mt-0.5 text-[11.5px] text-ink-3">
+                    {entry.actor} · {longDate(entry.at)}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </QueryBoundary>
       </Modal>
 
       {/* ---------------- row action sheet ---------------- */}
@@ -272,23 +900,84 @@ export default function Finance() {
         size="sm"
       >
         <div className="space-y-1">
-          {['Approve Payment', 'Request Re-verification', 'View Invoice', 'Download Receipt'].map(
-            (action) => (
+          {/* The one legal next step, from where this milestone actually is.
+              Offering "Release Payment" on an unverified milestone would only
+              produce an error from the database, which enforces the order. */}
+          {/* Only the PM's own step. Approving the release and paying it are
+              the customer's, and the customer has their own app — offering
+              them here would let one person walk a payment through a chain
+              that exists to need two. */}
+          {menuFor && MILESTONE_ACTIONS[menuFor.statusKey] ? (
+            <button
+              type="button"
+              disabled={advancing}
+              onClick={() => advance(menuFor, MILESTONE_ACTIONS[menuFor.statusKey].next)}
+              className="focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] font-semibold text-brand-ink transition-colors hover:bg-brand-50 disabled:opacity-50"
+            >
+              {advancing ? 'Working…' : MILESTONE_ACTIONS[menuFor.statusKey].label}
+            </button>
+          ) : null}
+
+          {menuFor?.statusKey === 'approved' &&
+          menuFor.needsSecondApproval &&
+          !menuFor.secondApprovedAt ? (
+            <>
+              <p className="px-3 pb-1.5 pt-2.5 text-[13px] text-ink-2">
+                Verified. This release is over {rupees(DUAL_APPROVAL_THRESHOLD)}{' '}
+                and needs sign-off from someone other than whoever verified it
+                before the customer can pay it.
+              </p>
               <button
-                key={action}
+                type="button"
+                disabled={advancing}
+                onClick={() => secondApprove(menuFor)}
+                className="focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] font-semibold text-brand-ink transition-colors hover:bg-brand-50 disabled:opacity-50"
+              >
+                {advancing ? 'Working…' : 'Record Second Approval'}
+              </button>
+            </>
+          ) : menuFor?.statusKey === 'approved' ? (
+            <p className="px-3 py-2.5 text-[13px] text-ink-2">
+              {menuFor.needsSecondApproval
+                ? 'Verified and second-approved. Waiting on the customer to approve the release.'
+                : 'Verified. Waiting on the customer to approve the release.'}
+            </p>
+          ) : null}
+
+          {menuFor?.statusKey === 'pending_verification' ? (
+            <button
+              type="button"
+              disabled={advancing}
+              onClick={() => advance(menuFor, 'upcoming')}
+              className="focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] text-danger transition-colors hover:bg-danger-bg/50 disabled:opacity-50"
+            >
+              Send Back for Rework
+            </button>
+          ) : null}
+
+          {/* PRD 5.3.5 asks for a PDF receipt on escrow transactions. */}
+          {menuFor?.statusKey === 'paid' ? (
+            <>
+              <button
                 type="button"
                 onClick={() => {
-                  setMenuFor(null)
-                  toast(`${action} — not wired up in this prototype.`, {
-                    tone: 'info',
+                  downloadMilestoneReceipt({
+                    milestone: menuFor,
+                    project: { name: summary.data?.projectName },
+                    payer: user?.name,
                   })
+                  setMenuFor(null)
+                  toast('Receipt downloaded.')
                 }}
-                className="focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] text-ink-2 transition-colors hover:bg-subtle hover:text-ink"
+                className="focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] font-semibold text-brand-ink transition-colors hover:bg-brand-50"
               >
-                {action}
+                Download Receipt (PDF)
               </button>
-            ),
-          )}
+              <p className="px-3 py-2 text-[12px] text-ink-2">
+                Paid in full. Reference {menuFor.txnId ?? 'not recorded'}.
+              </p>
+            </>
+          ) : null}
         </div>
       </Modal>
     </>

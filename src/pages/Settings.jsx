@@ -22,10 +22,16 @@ import { cn } from '@/lib/cn'
 import { useAuth } from '@/context/AuthContext'
 import { useTheme } from '@/context/ThemeContext'
 import { useToast } from '@/context/ToastContext'
-import { teamMembers } from '@/data/user'
+import EditProfileModal from '@/components/shared/EditProfileModal'
+import QueryBoundary, { RowSkeleton } from '@/components/ui/QueryBoundary'
+import { useQuery } from '@/hooks/useQuery'
+import { getProfile, listTeamMembers, getProfileStats } from '@/api/profiles'
+import { listInvitations, createInvitation, revokeInvitation } from '@/api/invitations'
+import { listActivity } from '@/api/activity'
+import { longDate } from '@/lib/format'
+import { FormMessage } from '@/components/auth/AuthForm'
 import { uploadAvatar } from '@/lib/storage'
 import { isStorageConfigured } from '@/lib/supabaseStorage'
-import { onAvatarError } from '@/lib/imageFallback'
 
 const themes = [
   { id: 'light', label: 'Light Mode', icon: Sun },
@@ -51,6 +57,75 @@ export default function SettingsPage() {
   const [language, setLanguage] = useState(languages[0])
   const [verifying, setVerifying] = useState(false)
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  /* Declared here, above the queries that gate on them — a query using a
+     flag declared further down hits the temporal dead zone at render. */
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [memberMenu, setMemberMenu] = useState(null)
+  const [inviting, setInviting] = useState(false)
+  const [inviteError, setInviteError] = useState(null)
+  const [invite, setInvite] = useState({ email: '', role: 'project_manager' })
+
+  /* Role, phone and job title live in Supabase — Firebase has nowhere to put
+     them — so the profile card reads from both sources. */
+  const profileQuery = useQuery(
+    () => getProfile(authUser?.uid),
+    [authUser?.uid],
+    { enabled: Boolean(authUser?.uid) },
+  )
+
+  const stats = useQuery(
+    () => getProfileStats(authUser?.uid),
+    [authUser?.uid],
+    { enabled: Boolean(authUser?.uid) },
+  )
+  const teamQuery = useQuery(
+    () => listTeamMembers(authUser?.uid),
+    [authUser?.uid],
+    { enabled: Boolean(authUser?.uid) },
+  )
+  const profile = profileQuery.data
+
+  const invitations = useQuery(() => listInvitations(), [], {
+    enabled: inviteOpen,
+  })
+
+  const memberActivity = useQuery(
+    () => listActivity({ actorUid: memberMenu.id, limit: 10 }),
+    [memberMenu?.id],
+    { enabled: Boolean(memberMenu?.id) },
+  )
+
+  const sendInvite = async (e) => {
+    e.preventDefault()
+    setInviteError(null)
+    setInviting(true)
+
+    try {
+      await createInvitation({
+        email: invite.email,
+        role: invite.role,
+        invitedBy: authUser?.uid,
+      })
+      setInviting(false)
+      setInvite({ email: '', role: 'project_manager' })
+      toast(`Invitation recorded for ${invite.email}.`)
+      invitations.refetch()
+    } catch (error) {
+      setInviting(false)
+      setInviteError(error.message)
+    }
+  }
+
+  const revoke = async (invitation) => {
+    try {
+      await revokeInvitation(invitation.id)
+      toast(`Invitation for ${invitation.email} revoked.`)
+      invitations.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    }
+  }
   const avatarInput = useRef(null)
 
   /**
@@ -85,8 +160,6 @@ export default function SettingsPage() {
       { tone: profileError ? 'info' : 'success' },
     )
   }
-  const [inviteOpen, setInviteOpen] = useState(false)
-  const [memberMenu, setMemberMenu] = useState(null)
 
   /* Briefly enable colour transitions so a theme switch cross-fades instead of
      snapping. The class is removed afterwards so ordinary interactions (hover,
@@ -146,17 +219,15 @@ export default function SettingsPage() {
           </div>
 
           <h1 className="mt-4 text-[17px] font-bold text-ink">{user.name}</h1>
-          <p className="mt-0.5 text-[12.5px] text-ink-3">{user.role}</p>
+          <p className="mt-0.5 text-[12.5px] text-ink-3">
+            {profile?.job_title ?? user.role}
+          </p>
 
           <Button
             variant="outline"
             icon={Pencil}
             className="mt-5 w-full"
-            onClick={() =>
-              toast('Profile editing is not available in this prototype.', {
-                tone: 'info',
-              })
-            }
+            onClick={() => setEditOpen(true)}
           >
             Edit Profile
           </Button>
@@ -173,17 +244,19 @@ export default function SettingsPage() {
           </Button>
         </Card>
 
+        {/* Counted from the database. These were fixture numbers (12 and 04)
+            shown under the signed-in user's own name. */}
         <div className="grid grid-cols-2 gap-4">
           <Card className="p-4">
             <p className="text-[11px] text-ink-3">Active Projects</p>
             <p className="tnum mt-2 text-[24px] font-bold leading-none text-brand-ink">
-              {user.activeProjects}
+              {stats.isLoading ? '—' : (stats.data?.activeProjects ?? 0)}
             </p>
           </Card>
           <Card className="p-4">
             <p className="text-[11px] text-ink-3">Teams Led</p>
             <p className="tnum mt-2 text-[24px] font-bold leading-none text-success">
-              {user.teamsLed}
+              {stats.isLoading ? '—' : (stats.data?.teamsLed ?? 0)}
             </p>
           </Card>
         </div>
@@ -259,7 +332,7 @@ export default function SettingsPage() {
               <input
                 id="set-phone"
                 readOnly
-                value={user.phone}
+                value={profile?.phone ?? '—'}
                 className="focus-ring tnum h-9 w-full rounded-[8px] border border-line bg-canvas px-3 text-[13px] text-ink-2"
               />
             </div>
@@ -283,18 +356,23 @@ export default function SettingsPage() {
             </button>
           </div>
 
-          <ul className="mt-4 space-y-2.5">
-            {teamMembers.map((member) => (
+          <div className="mt-4">
+          <QueryBoundary
+            isLoading={teamQuery.isLoading}
+            error={teamQuery.error}
+            data={teamQuery.data}
+            onRetry={teamQuery.refetch}
+            emptyTitle="No other team members"
+            emptyBody="Invite a colleague to see them listed here."
+            skeleton={<RowSkeleton rows={2} />}
+          >
+          <ul className="space-y-2.5">
+            {(teamQuery.data ?? []).map((member) => (
               <li
                 key={member.id}
                 className="flex items-center gap-3 rounded-[10px] border border-line bg-canvas px-3.5 py-3"
               >
-                <img
-                  src={member.avatar}
-                  onError={onAvatarError}
-                  alt=""
-                  className="size-9 shrink-0 rounded-full object-cover"
-                />
+                <Avatar user={member} size={36} />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-semibold text-ink">
                     {member.name}
@@ -315,6 +393,8 @@ export default function SettingsPage() {
               </li>
             ))}
           </ul>
+          </QueryBoundary>
+          </div>
         </Card>
 
         <Card className="p-5">
@@ -336,8 +416,18 @@ export default function SettingsPage() {
               id="set-lang"
               value={language}
               onChange={(e) => {
+                /* The picker lists the PRD's eleven target languages, but
+                   translating the interface is out of scope for this build —
+                   see CLAUDE.md. It used to claim success on every change
+                   ("Interface language set to Hindi") while the screen stayed
+                   in English, which reads as a bug rather than a stated gap. */
                 setLanguage(e.target.value)
-                toast(`Interface language set to ${e.target.value}.`)
+                if (e.target.value !== languages[0]) {
+                  toast(
+                    `${e.target.value.replace(/\s*\(.*\)/, '')} isn't available in this build yet — the interface stays in English.`,
+                    { tone: 'info' },
+                  )
+                }
               }}
               className="focus-ring h-9 w-full max-w-xs rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
             >
@@ -345,6 +435,11 @@ export default function SettingsPage() {
                 <option key={l}>{l}</option>
               ))}
             </select>
+            {language !== languages[0] ? (
+              <p className="mt-1.5 text-[11.5px] text-ink-3">
+                Shown in English until this language ships.
+              </p>
+            ) : null}
           </div>
 
           <div className="mt-5">
@@ -416,6 +511,16 @@ export default function SettingsPage() {
       </div>
 
       {/* ---------------- invite dialog ---------------- */}
+      <EditProfileModal
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        profile={profile}
+        onSaved={(message) => {
+          toast(message)
+          profileQuery.refetch()
+        }}
+      />
+
       <Modal
         open={inviteOpen}
         onClose={() => setInviteOpen(false)}
@@ -429,17 +534,18 @@ export default function SettingsPage() {
             </Button>
             <Button
               variant="primary"
-              onClick={() => {
-                setInviteOpen(false)
-                toast('Invitation sent.')
-              }}
+              form="invite-form"
+              type="submit"
+              disabled={inviting}
             >
-              Send Invite
+              {inviting ? 'Creating…' : 'Send Invite'}
             </Button>
           </>
         }
       >
-        <div className="space-y-4">
+        <form id="invite-form" onSubmit={sendInvite} className="space-y-4">
+          <FormMessage>{inviteError}</FormMessage>
+
           <div>
             <label htmlFor="inv-email" className="eyebrow mb-1.5 block">
               Email Address
@@ -447,29 +553,71 @@ export default function SettingsPage() {
             <input
               id="inv-email"
               type="email"
+              value={invite.email}
+              onChange={(e) => setInvite((v) => ({ ...v, email: e.target.value }))}
               placeholder="name@company.com"
-              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] placeholder:text-ink-4"
+              required
+              disabled={inviting}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4"
             />
           </div>
+
           <div>
             <label htmlFor="inv-role" className="eyebrow mb-1.5 block">
               Role
             </label>
             <select
               id="inv-role"
-              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px]"
+              value={invite.role}
+              onChange={(e) => setInvite((v) => ({ ...v, role: e.target.value }))}
+              disabled={inviting}
+              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
             >
-              {[
-                'Project Manager',
-                'Site Supervisor',
-                'Architect',
-                'Customer',
-              ].map((r) => (
-                <option key={r}>{r}</option>
-              ))}
+              {/* The three PRD section 4 personas — these match the CHECK
+                  constraint on the column. */}
+              <option value="project_manager">Project Manager</option>
+              <option value="site_supervisor">Site Supervisor</option>
+              <option value="customer">Customer</option>
             </select>
           </div>
-        </div>
+
+          {/* Honest about the limit rather than implying an email went out. */}
+          <p className="rounded-[8px] border border-line bg-subtle/60 px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-2">
+            The invitation is recorded and expires in 7 days. Email delivery
+            needs a mail provider that is not configured in this build, so
+            share the link manually for now.
+          </p>
+
+          {(invitations.data ?? []).length ? (
+            <div className="border-t border-line pt-3">
+              <p className="eyebrow mb-2">Pending invitations</p>
+              <ul className="space-y-1.5">
+                {(invitations.data ?? [])
+                  .filter((i) => i.status === 'pending')
+                  .map((i) => (
+                    <li
+                      key={i.id}
+                      className="flex items-center justify-between gap-3 text-[12px]"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-ink-2">
+                        {i.email}
+                        {i.isExpired ? (
+                          <span className="ml-1.5 text-danger">expired</span>
+                        ) : null}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => revoke(i)}
+                        className="focus-ring shrink-0 rounded font-semibold text-danger hover:underline"
+                      >
+                        Revoke
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ) : null}
+        </form>
       </Modal>
 
       <Modal
@@ -479,29 +627,38 @@ export default function SettingsPage() {
         description={memberMenu?.role ?? ''}
         size="sm"
       >
-        <div className="space-y-1">
-          {['Change Role', 'Reset Password', 'Deactivate Member'].map(
-            (action) => (
-              <button
-                key={action}
-                type="button"
-                onClick={() => {
-                  setMemberMenu(null)
-                  toast(`${action} — not wired up in this prototype.`, {
-                    tone: 'info',
-                  })
-                }}
-                className={cn(
-                  'focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] transition-colors hover:bg-subtle',
-                  action.startsWith('Deactivate')
-                    ? 'text-danger hover:bg-danger-bg/50'
-                    : 'text-ink-2 hover:text-ink',
-                )}
-              >
-                {action}
-              </button>
-            ),
-          )}
+        <div className="space-y-3">
+          <QueryBoundary
+            isLoading={memberActivity.isLoading}
+            error={memberActivity.error}
+            data={memberActivity.data}
+            onRetry={memberActivity.refetch}
+            emptyTitle="No recorded activity"
+            emptyBody="Changes this person makes will be listed here."
+            skeleton={<RowSkeleton rows={2} />}
+          >
+            <div>
+              <p className="eyebrow mb-2">Recent activity</p>
+              <ol className="space-y-2">
+                {(memberActivity.data ?? []).slice(0, 6).map((entry) => (
+                  <li key={entry.id} className="text-[12.5px] leading-snug text-ink-2">
+                    {entry.summary}
+                    <span className="ml-1 text-ink-4">· {longDate(entry.at)}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </QueryBoundary>
+
+          {/* Role changes are absent rather than faked: the security policy
+              lets a user modify only their own profile, so editing someone
+              else's needs an admin role this app does not have yet. Saying so
+              beats a button that always fails. */}
+          <p className="border-t border-line pt-3 text-[11.5px] leading-relaxed text-ink-3">
+            Changing another member’s role or deactivating them needs an
+            administrator role, which isn’t part of the permission model yet.
+            Each person sets their own role from their profile.
+          </p>
         </div>
       </Modal>
     </div>

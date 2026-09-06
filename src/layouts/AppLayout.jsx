@@ -12,6 +12,9 @@ import CreateProjectModal from '@/components/shared/CreateProjectModal'
 export default function AppLayout() {
   const [navOpen, setNavOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
+  /* Bumped when a project is created, so screens showing the portfolio can
+     refetch without a full reload. */
+  const [dataVersion, setDataVersion] = useState(0)
   const { pathname } = useLocation()
 
   // Close the mobile drawer and reset scroll whenever the route changes.
@@ -31,13 +34,19 @@ export default function AppLayout() {
         />
 
         <main className="mx-auto w-full max-w-[1280px] px-4 py-6 lg:px-8">
-          <Outlet context={{ openCreateProject: () => setCreateOpen(true) }} />
+          <Outlet
+            context={{
+              openCreateProject: () => setCreateOpen(true),
+              dataVersion,
+            }}
+          />
         </main>
       </div>
 
       <CreateProjectModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
+        onCreated={() => setDataVersion((v) => v + 1)}
       />
     </div>
   )

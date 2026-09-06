@@ -1,13 +1,22 @@
 /**
- * Vendors every remote image the prototype uses into public/images/.
+ * Vendors the sign-in screen's photography into public/images/.
  *
- * The demo used to hotlink images.unsplash.com and i.pravatar.cc, which meant
- * it rendered blank anywhere those hosts are unreachable — Codespaces behind a
- * restricted network policy, corporate proxies, offline. Run this once and
- * commit the result; src/data/media.js already points at the local paths.
+ * OPTIONAL. src/data/media.js points at the remote URLs below, so the sign-in
+ * screen renders from a fresh clone with no build step — see the comment at
+ * the top of that file for why hotlinking is the right default *there*. This
+ * script exists for the case where it is not: a deployment behind a network
+ * that blocks images.unsplash.com / i.pravatar.cc, or one that would rather
+ * not make an outbound request from an unauthenticated page at all.
  *
  *   node scripts/fetch-images.mjs           # skips files already present
  *   node scripts/fetch-images.mjs --force   # re-downloads everything
+ *
+ * Then swap the URLs in media.js for /images/auth-hero.jpg and
+ * /images/avatars/<id>.jpg, and commit public/images/.
+ *
+ * Every other image in the app — avatars, site-update photos — comes out of
+ * Supabase Storage with the row that references it and is not this script's
+ * business.
  *
  * No dependencies — Node 18+ global fetch only.
  */
@@ -26,19 +35,12 @@ const unsplash = (id, w, h) =>
   `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&w=${w}&q=70&h=${h}`
 
 const PHOTOS = [
-  ['auth-hero.jpg',       unsplash('1512917774080-9991f1c4c750', 1200, 1600)],
-  ['site-aerial.jpg',     unsplash('1503387762-592deb58ef4e', 800, 500)],
-  ['slab-pour.jpg',       unsplash('1541888946425-d81bb19240f5', 800, 600)],
-  ['crane.jpg',           unsplash('1504307651254-35680f356dfd', 800, 600)],
-  ['concrete-cone.jpg',   unsplash('1590069261209-f8e9b8642343', 800, 600)],
-  ['rebar.jpg',           unsplash('1581094794329-c8112a89af12', 800, 600)],
-  ['ducting.jpg',         unsplash('1621905251189-08b45d6a269e', 800, 600)],
-  ['blueprint-tablet.jpg',unsplash('1581092160562-40aa08e78837', 800, 600)],
+  ['auth-hero.jpg', unsplash('1512917774080-9991f1c4c750', 1200, 1600)],
 ]
 
-/* The six pravatar ids the fixtures reference, pulled at the largest size the
-   app asks for (240px) so every smaller render just scales down. */
-const AVATAR_IDS = [12, 13, 33, 45, 52, 60]
+/* The three faces in the sign-in screen's "+1,200 project managers" stack,
+   pulled at 240px so the 24px render just scales down. */
+const AVATAR_IDS = [12, 33, 45]
 const AVATARS = AVATAR_IDS.map((id) => [
   join('avatars', `${id}.jpg`),
   `https://i.pravatar.cc/240?img=${id}`,
@@ -127,4 +129,7 @@ if (failed.length) {
   process.exit(1)
 }
 
-console.log('\nDone. Commit public/images/ so the demo renders without network access.')
+console.log(
+  '\nDone. Point src/data/media.js at /images/… and commit public/images/ so\n' +
+    'the sign-in screen renders without an outbound request.',
+)

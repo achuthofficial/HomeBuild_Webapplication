@@ -90,10 +90,12 @@ Note the index difference: avatars are `<uid>/avatar.jpg` so the UID is segment
 **2**. Getting this wrong is the most likely cause of an upload failing with a
 row-level-security error.
 
-**Read access to `site-photos` is intentionally "any signed-in user".** This
-app has no project-membership table, so there is nothing to scope against yet.
-When projects gain real members, tighten this to a join against that table —
-as written, any authenticated account can read every site photo.
+> **Superseded.** Read access to `site-photos` used to be "any signed-in
+> user". It is now scoped to project membership, alongside the table policies
+> — a user who cannot see a project can no longer read its photography by
+> listing the bucket. The current storage policies live at the bottom of
+> `supabase/schema.sql` so every policy is in one file; run that rather than
+> the block above.
 
 ---
 

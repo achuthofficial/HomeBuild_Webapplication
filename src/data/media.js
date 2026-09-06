@@ -1,56 +1,35 @@
 /**
- * Every image the prototype uses lives in public/images/ and is referenced
- * from here, so the whole demo can be re-pointed from a single file.
+ * The photography on the sign-in screens.
  *
- * These used to be remote URLs (images.unsplash.com, i.pravatar.cc), which
- * meant the demo rendered blank anywhere those hosts are unreachable —
- * Codespaces on a restricted network, corporate proxies, offline. The bytes
- * are now vendored into the repo.
+ * This is the only place in the app that hard-codes an image. Everything
+ * else — avatars, site-update photos — comes out of Supabase Storage with the
+ * row that references it, so there is nothing else to configure here.
  *
- * To (re)populate the folder:  node scripts/fetch-images.mjs
- * Source URLs and licensing:   public/images/CREDITS.md
+ * These are REMOTE URLs, deliberately, and they are the exception to the rest
+ * of the app's no-hotlinking rule. `scripts/fetch-images.mjs` used to vendor
+ * them into public/images/ and this file pointed at the local copies, which is
+ * the better default for screens a signed-in manager depends on. The sign-in
+ * screen is not one of those: it is unauthenticated, decorative, degrades to a
+ * neutral placeholder via `onImageError` when a host is unreachable, and
+ * keeping it remote means a fresh clone renders correctly with no build step.
+ *
+ * If you would rather vendor them: `npm run images`, then swap the four URLs
+ * below for `/images/auth-hero.jpg` and `/images/avatars/<id>.jpg`.
  */
 
-/* Files in public/ are served from the site root, so these are absolute
-   paths rather than bundler imports — no hashing, but media.js stays a plain
-   string map and nothing else in the app has to change. */
-const IMAGES = '/images'
-
 export const media = {
-  /** Sign-in hero: modern house at dusk with a pool. */
-  authHero: `${IMAGES}/auth-hero.jpg`,
-
-  /** Site-update and feed photography. */
-  siteAerial: `${IMAGES}/site-aerial.jpg`,
-  slabPour: `${IMAGES}/slab-pour.jpg`,
-  crane: `${IMAGES}/crane.jpg`,
-  concreteCone: `${IMAGES}/concrete-cone.jpg`,
-  rebar: `${IMAGES}/rebar.jpg`,
-  ducting: `${IMAGES}/ducting.jpg`,
-  blueprintTablet: `${IMAGES}/blueprint-tablet.jpg`,
+  /** Sign-in hero: modern house at dusk with a reflecting pool. */
+  authHero:
+    'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=1200&h=1600&q=70',
 }
 
 /**
- * The avatar ids vendored by scripts/fetch-images.mjs. Kept in step with the
- * AVATAR_IDS manifest in that script — asking for an id outside this set
- * would resolve to a file that was never downloaded.
- */
-export const AVATAR_IDS = [12, 13, 33, 45, 52, 60]
-
-/**
- * Deterministic avatar for a given person id — keeps demo faces stable.
+ * A stable face for the "+1,200 project managers already joined" stack.
  *
- * `size` is accepted for call-site compatibility but ignored: one 240px file
- * is stored per id and the browser scales it down to whatever the layout
- * asks for (26px in a stack, 32px in the topbar, 240px on Settings).
+ * `size` is accepted for call-site compatibility and ignored — the stack
+ * renders at 24px and one 240px source scales down cleanly.
  */
 export const avatar = (id, size) => {
-  if (import.meta.env?.DEV && !AVATAR_IDS.includes(id)) {
-    console.warn(
-      `[media] avatar(${id}) has no vendored file. Add ${id} to AVATAR_IDS ` +
-        `here and in scripts/fetch-images.mjs, then re-run the script.`,
-    )
-  }
   void size
-  return `${IMAGES}/avatars/${id}.jpg`
+  return `https://i.pravatar.cc/240?img=${id}`
 }

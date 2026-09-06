@@ -35,6 +35,9 @@ export const router = createBrowserRouter([
     path: '/',
     errorElement: <RootError />,
     children: [
+      /* One audience — the project manager — so there is nothing to route on.
+         This used to resolve a role and send customers to the Compass; the
+         customer has their own app. */
       { index: true, element: <Navigate to="/dashboard" replace /> },
 
       /* ---------------------------------------------------- unauthenticated
