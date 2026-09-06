@@ -25,8 +25,12 @@ import { useToast } from '@/context/ToastContext'
 import EditProfileModal from '@/components/shared/EditProfileModal'
 import QueryBoundary, { RowSkeleton } from '@/components/ui/QueryBoundary'
 import { useQuery } from '@/hooks/useQuery'
-import { getProfile, listTeamMembers, getProfileStats } from '@/api/profiles'
-import { listInvitations, createInvitation, revokeInvitation } from '@/api/invitations'
+import { getProfile, getProfileStats } from '@/api/profiles'
+import {
+  listTeamMembers,
+  createInvitation,
+  revokeInvitation,
+} from '@/api/invitations'
 import { listActivity } from '@/api/activity'
 import { longDate } from '@/lib/format'
 import { FormMessage } from '@/components/auth/AuthForm'
@@ -38,6 +42,19 @@ const themes = [
   { id: 'dark', label: 'Dark Mode', icon: Moon },
   { id: 'system', label: 'System', icon: Monitor },
 ]
+
+/**
+ * Team member status.
+ *
+ * ACTIVE  — invited, and has since signed up with that address.
+ * PENDING — invited, invitation still live.
+ * EXPIRED — invited, the seven-day window closed before they signed up.
+ */
+const MEMBER_STATUS_TONES = {
+  ACTIVE: 'info',
+  PENDING: 'warning',
+  EXPIRED: 'neutral',
+}
 
 const languages = [
   'English (United States)',
@@ -79,6 +96,9 @@ export default function SettingsPage() {
     [authUser?.uid],
     { enabled: Boolean(authUser?.uid) },
   )
+  /* Everyone this account has invited, and whether they have signed up yet.
+     Not the profiles directory: nobody belongs on this list until they were
+     invited here. */
   const teamQuery = useQuery(
     () => listTeamMembers(authUser?.uid),
     [authUser?.uid],
@@ -86,10 +106,8 @@ export default function SettingsPage() {
   )
   const profile = profileQuery.data
 
-  const invitations = useQuery(() => listInvitations(), [], {
-    enabled: inviteOpen,
-  })
-
+  /* `id` is null for an invitee who has not signed up, which disables this —
+     there is no account whose activity could be looked up. */
   const memberActivity = useQuery(
     () => listActivity({ actorUid: memberMenu.id, limit: 10 }),
     [memberMenu?.id],
@@ -109,19 +127,25 @@ export default function SettingsPage() {
       })
       setInviting(false)
       setInvite({ email: '', role: 'project_manager' })
+      setInviteOpen(false)
       toast(`Invitation recorded for ${invite.email}.`)
-      invitations.refetch()
+      /* They join the list immediately, as a pending member — the invite is
+         what puts them on the team, not their eventual sign-up. */
+      teamQuery.refetch()
     } catch (error) {
       setInviting(false)
       setInviteError(error.message)
     }
   }
 
-  const revoke = async (invitation) => {
+  /* Revoking withdraws the invitation, which is what removes someone from
+     this list — listTeamMembers only counts pending and accepted ones. */
+  const revoke = async (member) => {
     try {
-      await revokeInvitation(invitation.id)
-      toast(`Invitation for ${invitation.email} revoked.`)
-      invitations.refetch()
+      await revokeInvitation(member.inviteId)
+      setMemberMenu(null)
+      toast(`Invitation for ${member.email} revoked.`)
+      teamQuery.refetch()
     } catch (error) {
       toast(error.message, { tone: 'info' })
     }
@@ -362,14 +386,14 @@ export default function SettingsPage() {
             error={teamQuery.error}
             data={teamQuery.data}
             onRetry={teamQuery.refetch}
-            emptyTitle="No other team members"
-            emptyBody="Invite a colleague to see them listed here."
+            emptyTitle="No team members yet"
+            emptyBody="Invite a colleague and they'll appear here — nobody is added to your team without an invitation."
             skeleton={<RowSkeleton rows={2} />}
           >
           <ul className="space-y-2.5">
             {(teamQuery.data ?? []).map((member) => (
               <li
-                key={member.id}
+                key={member.inviteId}
                 className="flex items-center gap-3 rounded-[10px] border border-line bg-canvas px-3.5 py-3"
               >
                 <Avatar user={member} size={36} />
@@ -378,10 +402,15 @@ export default function SettingsPage() {
                     {member.name}
                   </p>
                   <p className="truncate text-[11.5px] text-ink-3">
-                    {member.role}
+                    {/* Someone who has not signed up has no job title yet, and
+                        their address is the only thing that identifies them —
+                        which is already the name above, so don't repeat it. */}
+                    {member.joined ? member.role : `Invited as ${member.role}`}
                   </p>
                 </div>
-                <Chip tone="info">{member.status}</Chip>
+                <Chip tone={MEMBER_STATUS_TONES[member.status] ?? 'neutral'}>
+                  {member.status}
+                </Chip>
                 <button
                   type="button"
                   onClick={() => setMemberMenu(member)}
@@ -588,35 +617,11 @@ export default function SettingsPage() {
             share the link manually for now.
           </p>
 
-          {(invitations.data ?? []).length ? (
-            <div className="border-t border-line pt-3">
-              <p className="eyebrow mb-2">Pending invitations</p>
-              <ul className="space-y-1.5">
-                {(invitations.data ?? [])
-                  .filter((i) => i.status === 'pending')
-                  .map((i) => (
-                    <li
-                      key={i.id}
-                      className="flex items-center justify-between gap-3 text-[12px]"
-                    >
-                      <span className="min-w-0 flex-1 truncate text-ink-2">
-                        {i.email}
-                        {i.isExpired ? (
-                          <span className="ml-1.5 text-danger">expired</span>
-                        ) : null}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => revoke(i)}
-                        className="focus-ring shrink-0 rounded font-semibold text-danger hover:underline"
-                      >
-                        Revoke
-                      </button>
-                    </li>
-                  ))}
-              </ul>
-            </div>
-          ) : null}
+          {/* Pending invitations used to be listed again down here. They are
+              the Team Management list now — a pending invite IS a team member
+              who has not signed up yet — so showing them twice, with two
+              separate revoke buttons, only invited the question of whether
+              they were the same thing. */}
         </form>
       </Modal>
 
@@ -624,41 +629,69 @@ export default function SettingsPage() {
         open={!!memberMenu}
         onClose={() => setMemberMenu(null)}
         title={memberMenu?.name ?? ''}
-        description={memberMenu?.role ?? ''}
+        description={memberMenu?.email ?? ''}
         size="sm"
       >
         <div className="space-y-3">
-          <QueryBoundary
-            isLoading={memberActivity.isLoading}
-            error={memberActivity.error}
-            data={memberActivity.data}
-            onRetry={memberActivity.refetch}
-            emptyTitle="No recorded activity"
-            emptyBody="Changes this person makes will be listed here."
-            skeleton={<RowSkeleton rows={2} />}
-          >
-            <div>
-              <p className="eyebrow mb-2">Recent activity</p>
-              <ol className="space-y-2">
-                {(memberActivity.data ?? []).slice(0, 6).map((entry) => (
-                  <li key={entry.id} className="text-[12.5px] leading-snug text-ink-2">
-                    {entry.summary}
-                    <span className="ml-1 text-ink-4">· {longDate(entry.at)}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          </QueryBoundary>
+          {/* Two different people, so two different sheets. Someone who has
+              signed up has a history worth reading; someone who has only been
+              invited has nothing behind them yet, and the useful action is
+              withdrawing the invitation. */}
+          {memberMenu?.joined ? (
+            <QueryBoundary
+              isLoading={memberActivity.isLoading}
+              error={memberActivity.error}
+              data={memberActivity.data}
+              onRetry={memberActivity.refetch}
+              emptyTitle="No recorded activity"
+              emptyBody="Changes this person makes will be listed here."
+              skeleton={<RowSkeleton rows={2} />}
+            >
+              <div>
+                <p className="eyebrow mb-2">Recent activity</p>
+                <ol className="space-y-2">
+                  {(memberActivity.data ?? []).slice(0, 6).map((entry) => (
+                    <li key={entry.id} className="text-[12.5px] leading-snug text-ink-2">
+                      {entry.summary}
+                      <span className="ml-1 text-ink-4">· {longDate(entry.at)}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            </QueryBoundary>
+          ) : (
+            <p className="text-[12.5px] leading-relaxed text-ink-2">
+              {memberMenu?.status === 'EXPIRED'
+                ? `This invitation expired before ${memberMenu.email} signed up. Revoke it and send a fresh one.`
+                : `Invited as ${memberMenu?.role}. They join once they create an account with this address.`}
+            </p>
+          )}
 
-          {/* Role changes are absent rather than faked: the security policy
-              lets a user modify only their own profile, so editing someone
-              else's needs an admin role this app does not have yet. Saying so
-              beats a button that always fails. */}
-          <p className="border-t border-line pt-3 text-[11.5px] leading-relaxed text-ink-3">
-            Changing another member’s role or deactivating them needs an
-            administrator role, which isn’t part of the permission model yet.
-            Each person sets their own role from their profile.
-          </p>
+          {/* Revoking is what removes someone from the team, so it is the one
+              action here — and it only exists for an invitation that has not
+              been taken up. Someone who already has an account keeps it; that
+              is a deactivation, which needs the admin role below. */}
+          {memberMenu && !memberMenu.joined ? (
+            <div className="border-t border-line pt-3">
+              <button
+                type="button"
+                onClick={() => revoke(memberMenu)}
+                className="focus-ring block w-full rounded-[8px] px-3 py-2.5 text-left text-[13px] font-semibold text-danger transition-colors hover:bg-danger-bg/50"
+              >
+                Revoke invitation
+              </button>
+            </div>
+          ) : (
+            /* Role changes are absent rather than faked: the security policy
+               lets a user modify only their own profile, so editing someone
+               else's needs an admin role this app does not have yet. Saying so
+               beats a button that always fails. */
+            <p className="border-t border-line pt-3 text-[11.5px] leading-relaxed text-ink-3">
+              Changing another member’s role or deactivating them needs an
+              administrator role, which isn’t part of the permission model yet.
+              Each person sets their own role from their profile.
+            </p>
+          )}
         </div>
       </Modal>
     </div>

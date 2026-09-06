@@ -1829,9 +1829,18 @@ $$;
 alter table public.invitations  enable row level security;
 alter table public.activity_log enable row level security;
 
+/* Your invitations are yours to see.
+
+   This used to be `is_signed_in()`, which let any account read every
+   invitation in the database — the addresses of people other users had
+   invited, and who invited them. It also made the Team Management list
+   impossible to scope honestly: the client could filter, but the data was
+   there for the asking. Scoped to the inviter, the screen and the policy
+   agree on the same rule. */
 drop policy if exists "signed-in read invitations" on public.invitations;
-create policy "signed-in read invitations" on public.invitations
-  for select using (public.is_signed_in());
+drop policy if exists "read own invitations" on public.invitations;
+create policy "read own invitations" on public.invitations
+  for select using (invited_by = public.firebase_uid());
 
 drop policy if exists "signed-in create invitations" on public.invitations;
 create policy "signed-in create invitations" on public.invitations
@@ -2126,7 +2135,9 @@ create policy "read activity via project" on public.activity_log
 -- contractor you are unable to see, and a name and trade are not sensitive in
 -- the way a client's budget is. Writes on both remain restricted.
 --
--- `invitations` likewise: revoking is already limited to the inviter.
+-- `invitations` IS scoped, above: reading is limited to the inviter, not just
+-- revoking. An invitation names a person who has not agreed to anything yet,
+-- so it is not directory data.
 -- -----------------------------------------------------------------------------
 
 -- =============================================================================

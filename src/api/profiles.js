@@ -85,30 +85,18 @@ export async function updateProfileDetails(uid, { phone, jobTitle }) {
   )
 }
 
-/** Team Management list on Settings. */
-export async function listTeamMembers(excludeUid) {
-  requireConfigured()
-  let query = supabase
-    .from('profiles')
-    .select('firebase_uid, full_name, job_title, role, avatar_url')
-    .order('full_name', { ascending: true })
-
-  if (excludeUid) query = query.neq('firebase_uid', excludeUid)
-
-  const rows = unwrap(await query.limit(20))
-
-  return rows.map((r) => ({
-    id: r.firebase_uid,
-    name: r.full_name ?? '—',
-    role: r.job_title ?? r.role,
-    status: 'ACTIVE',
-    avatar: r.avatar_url,
-    initials: (r.full_name ?? '?')
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((w) => w[0]?.toUpperCase() ?? '')
-      .join(''),
-  }))
+/**
+ * Initials for an avatar fallback: "Manish Kumar" -> "MK".
+ *
+ * Exported because the team list is built from invitations rather than from
+ * profiles, and still has to render the same avatar.
+ */
+export function initialsOf(name) {
+  return (name ?? '?')
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? '')
+    .join('')
 }
 
 /**

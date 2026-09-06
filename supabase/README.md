@@ -243,6 +243,13 @@ Two directories stay readable by every signed-in user, deliberately:
 pick a contractor you are unable to see, and a name and trade are not
 sensitive the way a client's budget is. Writes on both remain restricted.
 
+`invitations` is scoped to the inviter — reading, not just revoking. An
+invitation names someone who has not agreed to anything yet, so it is not
+directory data the way a colleague's name is. This is also what lets Settings'
+Team Management list mean something: it is built from the invitations *you*
+sent, so a new account sees an empty team rather than every profile in the
+database.
+
 ### Two implementation details that matter
 
 **`has_project_access()` is `SECURITY DEFINER`, and has to be.** It is called
