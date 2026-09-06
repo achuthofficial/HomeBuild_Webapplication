@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Camera, Plus, TriangleAlert, ArrowRight } from 'lucide-react'
+import { Plus, TriangleAlert, ArrowRight } from 'lucide-react'
 
 import { Link } from 'react-router-dom'
 
@@ -22,13 +22,8 @@ import {
   listFeedEntries,
   listFeedCategories,
   attachPhoto,
-  createSiteUpdate,
-  listProjectOptions,
-  listMilestoneOptions,
-  WORK_CATEGORIES,
   getActivityBreakdown,
 } from '@/api/siteFeed'
-import { FormMessage } from '@/components/auth/AuthForm'
 import { listOpenFindings } from '@/api/alerts'
 import { onImageError } from '@/lib/imageFallback'
 import { useAuth } from '@/context/AuthContext'
@@ -53,22 +48,9 @@ export default function Construction() {
   const { authUser } = useAuth()
   const { t } = useTranslation()
   const [filter, setFilter] = useState('All Activity')
-  const [updateOpen, setUpdateOpen] = useState(false)
   const [lightbox, setLightbox] = useState(null)
 
   const [uploadingFor, setUploadingFor] = useState(null)
-  const [posting, setPosting] = useState(false)
-  const [postError, setPostError] = useState(null)
-  const [draft, setDraft] = useState({
-    projectId: '',
-    workCategory: WORK_CATEGORIES[0],
-    location: '',
-    notes: '',
-    status: 'in_progress',
-    milestoneId: '',
-    workersPresent: '',
-    materialsUsed: '',
-  })
   const fileInput = useRef(null)
   /* Which entry the hidden file input is currently acting for. */
   const pendingEntry = useRef(null)
@@ -87,61 +69,7 @@ export default function Construction() {
   const findings = useQuery(() => listOpenFindings(null, 3), [])
   const breakdown = useQuery(() => getActivityBreakdown(null), [filter])
   const categories = useQuery(() => listFeedCategories(), [])
-  const projectOptions = useQuery(() => listProjectOptions(), [], {
-    enabled: updateOpen,
-  })
 
-  /* PRD 8.3's optional Milestone Reference. Scoped to the chosen project, so
-     an update cannot be attached to another project's milestone. */
-  const milestoneOptions = useQuery(
-    () => listMilestoneOptions(draft.projectId),
-    [draft.projectId],
-    { enabled: updateOpen && Boolean(draft.projectId) },
-  )
-
-  /** Posts a real site update (PRD 8.3) rather than claiming one was posted. */
-  const postUpdate = async (e) => {
-    e.preventDefault()
-    setPostError(null)
-
-    if (!draft.projectId) {
-      setPostError('Choose which project this update belongs to.')
-      return
-    }
-
-    const payload = {
-      projectId: draft.projectId,
-      supervisorUid: authUser?.uid,
-      workCategory: draft.workCategory,
-      location: draft.location,
-      notes: draft.notes,
-      status: draft.status,
-      milestoneId: draft.milestoneId || null,
-      workersPresent: draft.workersPresent,
-      materialsUsed: draft.materialsUsed,
-    }
-
-    setPosting(true)
-    try {
-      await createSiteUpdate(payload)
-      setPosting(false)
-      setUpdateOpen(false)
-      setDraft((d) => ({
-        ...d,
-        location: '',
-        notes: '',
-        milestoneId: '',
-        workersPresent: '',
-        materialsUsed: '',
-      }))
-      toast('Site update posted to the feed.')
-      feed.refetch()
-      categories.refetch()
-    } catch (error) {
-      setPosting(false)
-      setPostError(error.message)
-    }
-  }
   const feedFilters = categories.data ?? ['All Activity']
 
   const openPicker = (entryId) => {
@@ -211,13 +139,6 @@ export default function Construction() {
               onChange={setFilter}
               align="right"
             />
-            <Button
-              variant="success"
-              icon={Camera}
-              onClick={() => setUpdateOpen(true)}
-            >
-              New Update
-            </Button>
           </>
         }
       />
@@ -482,196 +403,13 @@ export default function Construction() {
         </aside>
       </div>
 
-      {/* ---------------- new update dialog ---------------- */}
-      <Modal
-        open={updateOpen}
-        onClose={() => setUpdateOpen(false)}
-        title="New Site Update"
-        description="Record a day's work on site, with photos and metadata."
-        footer={
-          <>
-            <Button variant="outline" onClick={() => setUpdateOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="success"
-              form="new-update-form"
-              type="submit"
-              disabled={posting}
-            >
-              {posting ? 'Posting…' : 'Post Update'}
-            </Button>
-          </>
-        }
-      >
-        <form id="new-update-form" onSubmit={postUpdate} className="space-y-4">
-          <FormMessage>{postError}</FormMessage>
+      {/* The "New Site Update" dialog was removed. Filing the daily update is
+          the SITE SUPERVISOR's job, in the supervisor's own Android app —
+          PRD 8.3 ("submitted by a site supervisor"), 5.2.2 ("Photo Upload:
+          Site supervisor interface") and 7.1 (their client is Android-only).
+          The project manager READS this feed and triages the alerts it
+          generates (PRD 5.2.4); they do not post to it. */}
 
-          <div>
-            <label htmlFor="su-project" className="eyebrow mb-1.5 block">
-              Project
-            </label>
-            <select
-              id="su-project"
-              value={draft.projectId}
-              onChange={(e) =>
-                /* Clearing the milestone matters: it belongs to the project
-                   being switched away from. */
-                setDraft((d) => ({
-                  ...d,
-                  projectId: e.target.value,
-                  milestoneId: '',
-                }))
-              }
-              required
-              disabled={posting}
-              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
-            >
-              <option value="">Select a project…</option>
-              {(projectOptions.data ?? []).map((proj) => (
-                <option key={proj.id} value={proj.id}>
-                  {proj.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="su-cat" className="eyebrow mb-1.5 block">
-                Work Category
-              </label>
-              <select
-                id="su-cat"
-                value={draft.workCategory}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, workCategory: e.target.value }))
-                }
-                disabled={posting}
-                className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
-              >
-                {WORK_CATEGORIES.map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="su-status" className="eyebrow mb-1.5 block">
-                Work Status
-              </label>
-              <select
-                id="su-status"
-                value={draft.status}
-                onChange={(e) => setDraft((d) => ({ ...d, status: e.target.value }))}
-                disabled={posting}
-                className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
-              >
-                <option value="in_progress">In Progress</option>
-                <option value="done">Done</option>
-                <option value="blocked">Blocked</option>
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label htmlFor="su-loc" className="eyebrow mb-1.5 block">
-              Location on Site
-            </label>
-            <input
-              id="su-loc"
-              value={draft.location}
-              onChange={(e) => setDraft((d) => ({ ...d, location: e.target.value }))}
-              placeholder="e.g. East Wing, Level 4"
-              disabled={posting}
-              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4"
-            />
-          </div>
-
-          {/* The rest of PRD 5.2.5's optional metadata. Optional in the
-              document and optional here — a supervisor with 2 minutes to post
-              should not be blocked on a headcount. */}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="su-workers" className="eyebrow mb-1.5 block">
-                Workers Present
-              </label>
-              <input
-                id="su-workers"
-                type="number"
-                min="0"
-                value={draft.workersPresent}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, workersPresent: e.target.value }))
-                }
-                placeholder="12"
-                disabled={posting}
-                className="focus-ring tnum h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4"
-              />
-            </div>
-            <div>
-              <label htmlFor="su-materials" className="eyebrow mb-1.5 block">
-                Materials Used
-              </label>
-              <input
-                id="su-materials"
-                value={draft.materialsUsed}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, materialsUsed: e.target.value }))
-                }
-                placeholder="e.g. 40 bags OPC, 2 t steel"
-                disabled={posting}
-                className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink placeholder:text-ink-4"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label htmlFor="su-milestone" className="eyebrow mb-1.5 block">
-              Milestone Reference
-            </label>
-            <select
-              id="su-milestone"
-              value={draft.milestoneId}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, milestoneId: e.target.value }))
-              }
-              disabled={posting || !draft.projectId}
-              className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink disabled:opacity-60"
-            >
-              <option value="">
-                {draft.projectId ? 'Not linked' : 'Choose a project first'}
-              </option>
-              {(milestoneOptions.data ?? []).map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.sequence}. {m.name}
-                </option>
-              ))}
-            </select>
-            <p className="mt-1.5 text-[11.5px] text-ink-3">
-              Optional — which milestone this day’s work contributes to.
-            </p>
-          </div>
-
-          <div>
-            <label htmlFor="su-note" className="eyebrow mb-1.5 block">
-              Supervisor Note
-            </label>
-            <textarea
-              id="su-note"
-              rows={4}
-              value={draft.notes}
-              onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
-              placeholder="Describe what happened on site…"
-              disabled={posting}
-              className="focus-ring w-full resize-none rounded-[8px] border border-line bg-surface px-3 py-2 text-[13px] text-ink placeholder:text-ink-4"
-            />
-          </div>
-
-          <p className="text-[11.5px] leading-relaxed text-ink-3">
-            Photos are added to the entry after posting, from its upload slots.
-          </p>
-        </form>
-      </Modal>
 
       {/* ---------------- photo lightbox ---------------- */}
       <Modal

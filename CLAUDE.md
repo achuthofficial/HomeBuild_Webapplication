@@ -39,6 +39,7 @@ Built from the PRD before the manager-only scope was known:
 | `Compass.jsx`, `Landing.jsx`, `api/compass.js` | Customer — PRD section 5 |
 | `Design.jsx` and its route | Customer — PRD 5.1's stories are all "As a homeowner…" |
 | `offlineQueue.js`, `public/sw.js`, the offline banner | Site supervisor on a bad connection |
+| The "New Site Update" dialog, and `createSiteUpdate` / `WORK_CATEGORIES` / `listMilestoneOptions` with it | Site supervisor — PRD 8.3 "submitted by a site supervisor", 5.2.2 "site supervisor interface", 7.1 gives them an Android-only client |
 | `approved -> paid` in `MILESTONE_ACTIONS` | Customer approves the release, in their app |
 | "Log Alert" on Alerts | Not in `gggggg.png`; alerts come from the CV model |
 

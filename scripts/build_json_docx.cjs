@@ -28,7 +28,6 @@ const {
   Paragraph,
   TextRun,
   HeadingLevel,
-  AlignmentType,
   BorderStyle,
 } = require('docx')
 
