@@ -253,6 +253,7 @@ begin
       ('ai_alerts','location_in_photo','jsonb'),
       ('ai_alerts','status','text'),
       ('ai_alerts','assigned_to','text'),
+      ('ai_alerts','assigned_contractor_id','uuid'),
       ('ai_alerts','detected_at','timestamp with time zone'),
       ('ai_alerts','resolved_at','timestamp with time zone'),
       ('ai_alerts','resolution_photo','text'),
@@ -864,6 +865,19 @@ alter table public.site_updates
 alter table public.site_updates
   add constraint site_updates_milestone_fk
   foreign key (milestone_id) references public.milestones(id) on delete set null;
+
+-- PRD 5.2.4: "PM reviews alert and either dismisses (false positive), assigns
+-- to contractor for fix, or escalates to client". The middle option had
+-- nowhere to go — `assigned_to` points at a PROFILE, and a contractor firm is
+-- not a person with an account. Assigning to a person and assigning to the
+-- firm that has to do the rework are different acts, so they get different
+-- columns rather than one overloaded one.
+alter table public.ai_alerts
+  add column if not exists assigned_contractor_id uuid
+    references public.contractors(id) on delete set null;
+
+create index if not exists ai_alerts_contractor_idx
+  on public.ai_alerts(assigned_contractor_id);
 
 create index if not exists site_updates_milestone_idx
   on public.site_updates(milestone_id);
@@ -1690,10 +1704,16 @@ $$;
 -- -----------------------------------------------------------------------------
 -- Alert workflow (PRD 8.4)
 -- -----------------------------------------------------------------------------
+/* Signature changed when PRD 5.2.4's "assign to contractor" was added, so the
+   three-argument version has to go explicitly — `create or replace` would
+   leave it behind as an overload and PostgREST would not know which to call. */
+drop function if exists public.resolve_alert(uuid, text, text);
+
 create or replace function public.resolve_alert(
   p_alert_id uuid,
   p_next_status text,
-  p_assignee text default null
+  p_assignee text default null,
+  p_contractor_id uuid default null
 )
 returns public.ai_alerts
 language plpgsql
@@ -1702,6 +1722,7 @@ as $$
 declare
   v_row public.ai_alerts;
   v_uid text := public.firebase_uid();
+  v_who text;
 begin
   if v_uid is null then
     raise exception 'Not signed in';
@@ -1711,11 +1732,27 @@ begin
     raise exception 'Unknown alert status %', p_next_status;
   end if;
 
+  /* PRD 5.2.4 gives the PM three outcomes, and "assign to contractor for fix"
+     is one of them. An assignment names EITHER a person or a contractor, never
+     both — the audit line has to say who is holding it, and "assigned to Priya
+     and Skyline Technologies" answers that with two names and no owner. */
+  if p_next_status = 'assigned'
+     and p_assignee is not null and p_contractor_id is not null then
+    raise exception 'Assign an alert to a person or to a contractor, not both';
+  end if;
+
   update public.ai_alerts
   set status = p_next_status,
+      /* Falling back to the caller keeps the old "assign to me" behaviour
+         when neither is named. */
       assigned_to = case
-        when p_next_status = 'assigned' then coalesce(p_assignee, v_uid)
+        when p_next_status = 'assigned' and p_contractor_id is null
+          then coalesce(p_assignee, v_uid)
+        when p_next_status = 'assigned' then null
         else assigned_to end,
+      assigned_contractor_id = case
+        when p_next_status = 'assigned' then p_contractor_id
+        else assigned_contractor_id end,
       resolved_at = case
         when p_next_status in ('resolved','false_positive') then now()
         else null end
@@ -1726,10 +1763,23 @@ begin
     raise exception 'Alert not found';
   end if;
 
+  /* Name the assignee in the audit line — "marked assigned" on its own does
+     not record who now owns the rework, which is the whole point of the step. */
+  if p_next_status = 'assigned' then
+    select coalesce(
+      (select c.name from public.contractors c where c.id = v_row.assigned_contractor_id),
+      (select p.full_name from public.profiles p where p.firebase_uid = v_row.assigned_to),
+      v_row.assigned_to)
+    into v_who;
+  end if;
+
   insert into public.activity_log (project_id, actor_uid, entity, entity_id, action, summary)
   values (
     v_row.project_id, v_uid, 'alert', v_row.id, 'status_changed',
-    format('Alert “%s” marked %s', v_row.category, replace(p_next_status, '_', ' '))
+    case when p_next_status = 'assigned' and v_who is not null
+      then format('Alert “%s” assigned to %s', v_row.category, v_who)
+      else format('Alert “%s” marked %s', v_row.category, replace(p_next_status, '_', ' '))
+    end
   );
 
   return v_row;

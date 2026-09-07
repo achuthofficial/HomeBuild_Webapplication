@@ -3,20 +3,22 @@ import { MoreVertical, Star } from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
 import Card from '@/components/ui/Card'
-import Button from '@/components/ui/Button'
 import Chip from '@/components/ui/Chip'
 import Segmented from '@/components/ui/Segmented'
 import FilterSelect from '@/components/ui/FilterSelect'
 import StarRating from '@/components/ui/StarRating'
 import Sparkline from '@/components/ui/Sparkline'
 import Modal from '@/components/ui/Modal'
+import Pagination from '@/components/ui/Pagination'
 import QueryBoundary, { KpiSkeleton, RowSkeleton } from '@/components/ui/QueryBoundary'
 import { cn } from '@/lib/cn'
 import { useToast } from '@/context/ToastContext'
 import { useTranslation } from '@/context/LanguageContext'
 import { useQuery } from '@/hooks/useQuery'
+import { rupees, longDate } from '@/lib/format'
 import {
   listContractors,
+  CONTRACTORS_PER_PAGE,
   getContractorKpis,
   listTradeFilters,
   getContractorDetail,
@@ -32,8 +34,13 @@ function buildKpis(k) {
       badge: { label: 'Directory', tone: 'success' }, sub: 'Vetted partners on the platform' },
     { id: 'avg-performance', label: 'Avg. Performance', value: k.avgPerformance,
       badge: { label: 'Stable', tone: 'brand' }, sub: 'Based on safety & schedule KPIs' },
-    { id: 'budget-utilization', label: 'Budget Utilization', value: '74%',
-      badge: { label: 'In Review', tone: 'warning' }, sub: 'Allocated this quarter' },
+    /* Was the literal '74%'. This is the money actually committed to
+        contractors — milestone releases that name one and fall due this
+        quarter. An amount, not a percentage: the schema has no denominator
+        that would make a percentage mean anything. */
+    { id: 'budget-utilization', label: 'Contractor Allocation',
+      value: rupees(k.allocatedThisQuarter),
+      sub: 'Milestone releases due this quarter' },
     { id: 'compliance-rate', label: 'Compliance Rate', value: k.complianceRate,
       sub: 'Insurance & Permits valid', watermark: true },
   ]
@@ -66,17 +73,29 @@ export default function Contractors() {
   const [minRating, setMinRating] = useState(false)
   const [menuFor, setMenuFor] = useState(null)
   const [updating, setUpdating] = useState(false)
+  const [page, setPage] = useState(1)
 
   /* Filtering happens in the query so the directory can grow past what is
      reasonable to hold in memory — PRD goal 4 targets 200+ contractors. */
   const contractorsQuery = useQuery(
-    () => listContractors({ tab, trade, minRating }),
-    [tab, trade, minRating],
+    () => listContractors({ tab, trade, minRating, page }),
+    [tab, trade, minRating, page],
   )
   const kpisQuery = useQuery(() => getContractorKpis(), [])
   const tradesQuery = useQuery(() => listTradeFilters(), [])
 
-  const rows = contractorsQuery.data ?? []
+  const rows = contractorsQuery.data?.contractors ?? []
+  const total = contractorsQuery.data?.total ?? 0
+  const totalPages = contractorsQuery.data?.totalPages ?? 1
+  const safePage = Math.min(page, totalPages)
+  const start = (safePage - 1) * CONTRACTORS_PER_PAGE
+
+  /* Narrowing the filters must return to page one, or a tight filter lands on
+     a page that no longer exists and the table reads as empty. */
+  const onFilter = (setter) => (value) => {
+    setter(value)
+    setPage(1)
+  }
   const tradeFilters = tradesQuery.data ?? ['All Trades']
 
   /* Loaded only when the sheet opens, keyed on which contractor. */
@@ -123,19 +142,22 @@ export default function Contractors() {
             <Segmented
               options={contractorTabs}
               value={tab}
-              onChange={setTab}
+              onChange={onFilter(setTab)}
               variant="filled"
               ariaLabel="Contractor type"
             />
             <FilterSelect
               value={trade}
               options={tradeFilters}
-              onChange={setTrade}
+              onChange={onFilter(setTrade)}
               align="right"
             />
             <button
               type="button"
-              onClick={() => setMinRating((v) => !v)}
+              onClick={() => {
+                setMinRating((v) => !v)
+                setPage(1)
+              }}
               aria-pressed={minRating}
               className={cn(
                 'focus-ring inline-flex h-9 items-center gap-1.5 rounded-[8px] border px-3 text-[12px] font-semibold transition-colors',
@@ -255,7 +277,7 @@ export default function Contractors() {
                           {row.name}
                         </span>
                         <span className="tnum block text-[11px] text-ink-3">
-                          ID: {row.id}
+                          ID: {row.code ?? '—'}
                         </span>
                       </span>
                     </div>
@@ -354,31 +376,11 @@ export default function Contractors() {
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3.5">
-          <p className="text-[12px] text-ink-3">
-            Showing {rows.length === 0 ? 0 : 1}-{rows.length} of {rows.length}{' '}
-            contractors
+          <p className="tnum text-[12px] text-ink-3">
+            Showing {total === 0 ? 0 : start + 1}-
+            {Math.min(start + CONTRACTORS_PER_PAGE, total)} of {total} contractors
           </p>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled
-              onClick={() => {}}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                toast('Every contractor matching these filters is already shown.', {
-                  tone: 'info',
-                })
-              }
-            >
-              Next
-            </Button>
-          </div>
+          <Pagination page={safePage} totalPages={totalPages} onChange={setPage} />
         </div>
       </Card>
 
@@ -402,7 +404,7 @@ export default function Contractors() {
           >
             {detail.data ? (
               <>
-                <div className="grid grid-cols-3 gap-3 rounded-[8px] bg-subtle/60 p-3 text-center">
+                <div className="grid grid-cols-4 gap-3 rounded-[8px] bg-subtle/60 p-3 text-center">
                   <div>
                     <p className="eyebrow">Score</p>
                     <p className="tnum mt-1 text-[16px] font-bold text-ink">
@@ -416,6 +418,12 @@ export default function Contractors() {
                     </p>
                   </div>
                   <div>
+                    <p className="eyebrow">Cities</p>
+                    <p className="mt-1 text-[13px] font-semibold text-ink">
+                      {detail.data.cities.length || '—'}
+                    </p>
+                  </div>
+                  <div>
                     <p className="eyebrow">Compliance</p>
                     <p
                       className={cn(
@@ -426,6 +434,69 @@ export default function Contractors() {
                       {detail.data.compliance_ok ? 'Valid' : 'Lapsed'}
                     </p>
                   </div>
+                </div>
+
+                {/* PRD section 4's named PM pain: "manually reconciling
+                    contractor invoices with milestones". The link existed and
+                    nothing read it, so a release could be billed against a
+                    firm with no way to see what that firm was owed. */}
+                <div>
+                  <p className="eyebrow mb-1.5">Milestone Billing</p>
+                  {detail.data.billed.length ? (
+                    <>
+                      <div className="mb-2 flex gap-3 text-[12px]">
+                        <span className="text-ink-2">
+                          Released{' '}
+                          <span className="tnum font-semibold text-ink">
+                            {rupees(detail.data.billedPaid)}
+                          </span>
+                        </span>
+                        <span className="text-ink-2">
+                          Outstanding{' '}
+                          <span className="tnum font-semibold text-ink">
+                            {rupees(detail.data.billedOutstanding)}
+                          </span>
+                        </span>
+                      </div>
+                      <ul className="space-y-1.5">
+                        {detail.data.billed.slice(0, 6).map((m) => (
+                          <li
+                            key={m.id}
+                            className="flex items-start justify-between gap-3 text-[12.5px]"
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-ink-2">
+                                {m.name}
+                              </span>
+                              <span className="block truncate text-[11px] text-ink-4">
+                                {m.project}
+                                {m.dueDate ? ` · ${longDate(m.dueDate)}` : ''}
+                              </span>
+                            </span>
+                            <span className="shrink-0 text-right">
+                              <span className="tnum block font-semibold text-ink">
+                                {rupees(m.amount)}
+                              </span>
+                              <span
+                                className={cn(
+                                  'block text-[10px] uppercase tracking-[0.05em]',
+                                  m.status === 'paid'
+                                    ? 'text-success'
+                                    : 'text-ink-4',
+                                )}
+                              >
+                                {m.status.replace(/_/g, ' ')}
+                              </span>
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : (
+                    <p className="text-[12.5px] text-ink-3">
+                      No milestones billed against this contractor.
+                    </p>
+                  )}
                 </div>
 
                 <div>

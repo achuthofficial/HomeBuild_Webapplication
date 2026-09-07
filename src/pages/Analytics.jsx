@@ -7,6 +7,7 @@ import Button from '@/components/ui/Button'
 import Chip from '@/components/ui/Chip'
 import FilterSelect from '@/components/ui/FilterSelect'
 import Pagination from '@/components/ui/Pagination'
+import Modal from '@/components/ui/Modal'
 import QueryBoundary, { KpiSkeleton, RowSkeleton } from '@/components/ui/QueryBoundary'
 import { cn } from '@/lib/cn'
 import { longDate, timeAgo } from '@/lib/format'
@@ -15,10 +16,12 @@ import { useQuery } from '@/hooks/useQuery'
 import { useAuth } from '@/context/AuthContext'
 import { useTranslation } from '@/context/LanguageContext'
 import { downloadCsv } from '@/lib/csv'
+import { listContractorOptions } from '@/api/finance'
 import {
   listAlerts,
   getAlertKpis,
   setAlertStatus,
+  assignAlertToContractor,
   alertActionsFor,
   severityFilters,
   statusFilters,
@@ -105,16 +108,52 @@ export default function Analytics() {
    * rather than silently stored.
    */
   const [actingOn, setActingOn] = useState(null)
+  /* PRD 5.2.4's "assign to contractor for fix" — the alert awaiting a choice
+     of firm, or null. Held rather than acted on immediately, because the
+     document's outcome names a contractor and the row cannot know which. */
+  const [assigningTo, setAssigningTo] = useState(null)
+  const [contractorId, setContractorId] = useState('')
+
+  /* Only fetched when the picker opens. */
+  const contractorOptions = useQuery(() => listContractorOptions(), [], {
+    enabled: Boolean(assigningTo),
+  })
 
   const runAction = async (alert, nextStatus, label) => {
+    /* Not a status of its own — it opens the picker, and the assignment
+       happens on confirm. */
+    if (nextStatus === 'assign_contractor') {
+      setContractorId('')
+      setAssigningTo(alert)
+      return
+    }
+
     setActingOn(alert.id)
     try {
-      await setAlertStatus(
-        alert.id,
-        nextStatus,
-        nextStatus === 'assigned' ? authUser?.uid : null,
-      )
+      await setAlertStatus(alert.id, nextStatus, {
+        assignee: nextStatus === 'assigned' ? authUser?.uid : null,
+      })
       toast(`“${alert.type}” — ${label.toLowerCase()}.`)
+      alertsQuery.refetch()
+      kpisQuery.refetch()
+    } catch (error) {
+      toast(error.message, { tone: 'info' })
+    } finally {
+      setActingOn(null)
+    }
+  }
+
+  const confirmContractor = async () => {
+    if (!contractorId) return
+    const alert = assigningTo
+    setActingOn(alert.id)
+    try {
+      await assignAlertToContractor(alert.id, contractorId)
+      const name =
+        (contractorOptions.data ?? []).find((c) => c.id === contractorId)?.name ??
+        'contractor'
+      toast(`“${alert.type}” assigned to ${name}.`)
+      setAssigningTo(null)
       alertsQuery.refetch()
       kpisQuery.refetch()
     } catch (error) {
@@ -315,6 +354,14 @@ export default function Analytics() {
 
                   <td className="px-5 py-4 text-[13px] text-ink-2">
                     {alert.project}
+                    {/* Who is holding the rework. A contractor is the PRD
+                        5.2.4 outcome; a person is "assign to me". */}
+                    {alert.assignedTo ? (
+                      <span className="mt-0.5 block text-[11px] text-ink-4">
+                        {alert.assignedIsContractor ? '→ ' : '→ '}
+                        {alert.assignedTo}
+                      </span>
+                    ) : null}
                   </td>
 
                   <td className="px-5 py-4 text-[12.5px] text-ink-3">
@@ -381,6 +428,53 @@ export default function Analytics() {
         </div>
       </Card>
 
+      {/* PRD 5.2.4: "assigns to contractor for fix". */}
+      <Modal
+        open={!!assigningTo}
+        onClose={() => setAssigningTo(null)}
+        title="Assign to contractor"
+        description={assigningTo?.type ?? ''}
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setAssigningTo(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={confirmContractor}
+              disabled={!contractorId || actingOn === assigningTo?.id}
+            >
+              {actingOn === assigningTo?.id ? 'Assigning…' : 'Assign'}
+            </Button>
+          </>
+        }
+      >
+        <label htmlFor="al-contractor" className="eyebrow mb-1.5 block">
+          Contractor
+        </label>
+        <select
+          id="al-contractor"
+          value={contractorId}
+          onChange={(e) => setContractorId(e.target.value)}
+          disabled={contractorOptions.isLoading}
+          className="focus-ring h-9 w-full rounded-[8px] border border-line bg-surface px-3 text-[13px] text-ink"
+        >
+          <option value="">
+            {contractorOptions.isLoading ? 'Loading…' : 'Choose a contractor…'}
+          </option>
+          {(contractorOptions.data ?? []).map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        <p className="mt-2 text-[11.5px] leading-relaxed text-ink-3">
+          The alert stays open and moves to <strong>assigned</strong>. An alert
+          names a person or a contractor, not both — assigning here clears an
+          earlier "assign to me".
+        </p>
+      </Modal>
     </>
   )
 }
