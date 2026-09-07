@@ -56,16 +56,43 @@ export async function resolveProjectRef(requestedId) {
 
 export async function getFinanceSummary(projectId) {
   requireConfigured()
-  const row = unwrap(
-    await supabase
+
+  /* First of this month and of last month, local time — the ledger stores a
+     plain date, so comparing against a UTC instant would misfile spending on
+     the first or last day of a month for anyone east of Greenwich. */
+  const now = new Date()
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+  const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const iso = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+
+  const [row, recent] = await Promise.all([
+    supabase
       .from('projects')
       .select('id, name, budget_total, budget_consumed')
       .eq('id', projectId)
-      .single(),
-  )
+      .single()
+      .then(unwrap),
+    /* Only the two months the cards compare, not the whole ledger. */
+    supabase
+      .from('expenses')
+      .select('amount, incurred_on')
+      .eq('project_id', projectId)
+      .gte('incurred_on', iso(prevStart))
+      .then(unwrap),
+  ])
 
   const total = Number(row.budget_total) || 0
   const consumed = Number(row.budget_consumed) || 0
+
+  const monthStartIso = iso(monthStart)
+  let thisMonth = 0
+  let lastMonth = 0
+  for (const e of recent) {
+    const amount = Number(e.amount) || 0
+    if (e.incurred_on >= monthStartIso) thisMonth += amount
+    else lastMonth += amount
+  }
 
   return {
     projectName: row.name,
@@ -74,6 +101,23 @@ export async function getFinanceSummary(projectId) {
     remaining: Math.max(0, total - consumed),
     /* Guarded: a project with no budget set would divide by zero. */
     consumedPct: total ? Math.round((consumed / total) * 100) : 0,
+
+    /* Spend recorded so far in the current calendar month, and the same for
+       the month before it. The KPI row used to carry `delta: 2.4` and
+       `delta: -1.2` as literals — numbers that never moved and described
+       nothing. These are what the cards show instead.
+
+       `drawdownPct` is what the Remaining card reports: the share of the whole
+       budget consumed this month, negative because remaining is what falls.
+       Null when there is nothing to say — no budget set, or no spending
+       recorded this month — so the card renders no figure rather than a
+       confident 0.0%. */
+    thisMonth,
+    lastMonth,
+    drawdownPct:
+      total && thisMonth > 0
+        ? -Math.round((thisMonth / total) * 1000) / 10
+        : null,
   }
 }
 

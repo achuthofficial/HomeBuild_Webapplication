@@ -49,15 +49,31 @@ const RANGE_MONTHS = {
   'Year to Date': new Date().getMonth() + 1,
 }
 
-/** KPI cards from the summary. Copy and icons stay client-side. */
+/**
+ * KPI cards from the summary. Copy and icons stay client-side.
+ *
+ * The top-right slot on each card is the mockup's (scripts/ddddd.png), and it
+ * used to hold `delta: 2.4` and `delta: -1.2` — literals that never moved and
+ * were not a measurement of anything. Only two of the three cards have a real
+ * figure to put there:
+ *
+ *   Total Budget    nothing. It is an agreed figure that changes only when
+ *                   someone edits the project, so it has no trend to report.
+ *   Consumed        the share of the budget used, which was always real.
+ *   Remaining       how much of the budget was drawn down this month, from
+ *                   the expense ledger. Negative, because remaining is what
+ *                   falls. Absent when nothing was spent this month.
+ */
 function buildKpis(s) {
   return [
     { id: 'total-budget', label: 'Total Budget', value: s.total,
-      delta: 2.4, icon: Wallet, iconTone: 'brand' },
+      icon: Wallet, iconTone: 'brand' },
     { id: 'budget-consumed', label: 'Budget Consumed', value: s.consumed,
       note: `${s.consumedPct}% Used`, icon: Banknote, iconTone: 'warning' },
     { id: 'remaining', label: 'Remaining', value: s.remaining,
-      delta: -1.2, icon: PiggyBank, iconTone: 'violet' },
+      delta: s.drawdownPct ?? undefined,
+      deltaTitle: 'Drawn down this month',
+      icon: PiggyBank, iconTone: 'violet' },
   ]
 }
 
@@ -72,7 +88,7 @@ const iconTones = {
  * Finance KPI card. The layout differs from the dashboard's: the tinted icon
  * sits top-LEFT with the delta top-RIGHT, then the eyebrow, then the figure.
  */
-function FinanceKpi({ label, value, delta, note, icon: Icon, iconTone }) {
+function FinanceKpi({ label, value, delta, deltaTitle, note, icon: Icon, iconTone }) {
   const positive = delta > 0
 
   return (
@@ -87,8 +103,11 @@ function FinanceKpi({ label, value, delta, note, icon: Icon, iconTone }) {
           <Icon className="size-4" strokeWidth={1.75} />
         </span>
 
+        {/* Empty when there is nothing true to report — better than a figure
+            that looks measured and is not. */}
         {delta !== undefined ? (
           <span
+            title={deltaTitle}
             className={cn(
               'tnum inline-flex items-center gap-1 text-[11.5px] font-semibold',
               positive ? 'text-success' : 'text-ink-3',
@@ -102,9 +121,9 @@ function FinanceKpi({ label, value, delta, note, icon: Icon, iconTone }) {
               <TrendingDown className="size-3" strokeWidth={2} />
             )}
           </span>
-        ) : (
+        ) : note ? (
           <span className="text-[11.5px] font-medium text-ink-3">{note}</span>
-        )}
+        ) : null}
       </div>
 
       <p className="eyebrow mt-5">{label}</p>
