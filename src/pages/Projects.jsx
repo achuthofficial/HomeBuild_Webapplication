@@ -1,6 +1,13 @@
 import { useMemo, useState } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
-import { PlusCircle, SlidersHorizontal, Wallet, CalendarDays, ChevronDown } from 'lucide-react'
+import {
+  PlusCircle,
+  SlidersHorizontal,
+  Wallet,
+  CalendarDays,
+  ChevronDown,
+  Pencil,
+} from 'lucide-react'
 
 import PageHeader from '@/components/layout/PageHeader'
 import Card from '@/components/ui/Card'
@@ -18,6 +25,7 @@ import { useAuth } from '@/context/AuthContext'
 import { useTranslation } from '@/context/LanguageContext'
 import Modal from '@/components/ui/Modal'
 import Avatar from '@/components/ui/Avatar'
+import EditProjectModal from '@/components/shared/EditProjectModal'
 import {
   listProjects,
   listProjectFilters,
@@ -72,6 +80,8 @@ export default function Projects() {
   const { t } = useTranslation()
   const [savingId, setSavingId] = useState(null)
   const [teamFor, setTeamFor] = useState(null)
+  /* Which project the edit dialog is open on, or null. */
+  const [editing, setEditing] = useState(null)
   const [claiming, setClaiming] = useState(false)
   const [memberBusy, setMemberBusy] = useState(false)
   const [addUid, setAddUid] = useState('')
@@ -514,6 +524,18 @@ export default function Projects() {
                   <CalendarDays className="size-3.5" strokeWidth={1.75} />
                   Schedule
                 </Link>
+                {/* Not in the mockup (scripts/bbbbb.png), which has no edit
+                    affordance on the card at all — added on request, in the
+                    row that already carries the two other per-project links
+                    rather than as new chrome of its own. */}
+                <button
+                  type="button"
+                  onClick={() => setEditing(project)}
+                  className="focus-ring ml-auto inline-flex items-center gap-1.5 rounded text-[11.5px] font-semibold text-ink-2 transition-colors hover:text-brand-ink"
+                >
+                  <Pencil className="size-3.5" strokeWidth={1.75} />
+                  Edit
+                </button>
               </div>
             </Card>
           ))}
@@ -555,6 +577,20 @@ export default function Projects() {
           </Button>
         </div>
       ) : null}
+
+      <EditProjectModal
+        open={!!editing}
+        project={editing}
+        onClose={() => setEditing(null)}
+        /* Refetch rather than patching in place: the card renders derived
+           fields (manager name, team stack) that the update does not return
+           any differently, and a stale list is the bug this screen already
+           had once. */
+        onSaved={() => {
+          projectsQuery.refetch()
+          filtersQuery.refetch()
+        }}
+      />
 
       {/* ---------------- team management ---------------- */}
       <Modal

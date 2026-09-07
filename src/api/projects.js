@@ -45,6 +45,14 @@ function toProject(row) {
     timelineKey: row.timeline_status,
     estimate: row.expected_completion,
     startDate: row.start_date,
+    /* PRD 8.1's descriptive fields. Carried on every project because the edit
+       dialog seeds its form from this shape rather than re-fetching the row. */
+    plotAddress: row.plot_address,
+    plotLat: row.plot_lat,
+    plotLng: row.plot_lng,
+    plotFacing: row.plot_facing,
+    totalFloors: row.total_floors,
+    bhkPerFloor: row.bhk_per_floor,
     /* Avatar stacks show at most three faces plus a +N counter. */
     team: members.slice(0, 3).map((m) => m.avatar_url).filter(Boolean),
     teamNames: members.map((m) => m.full_name),
@@ -57,6 +65,7 @@ const PROJECT_SELECT = `
   id, name, client_name, city, status, progress_pct,
   budget_total, budget_consumed, budget_status, timeline_status,
   start_date, expected_completion, manager_uid,
+  plot_address, plot_lat, plot_lng, plot_facing, total_floors, bhk_per_floor,
   manager:profiles!projects_manager_uid_fkey ( full_name, avatar_url ),
   project_members ( profiles ( full_name, avatar_url ) )
 `
@@ -240,6 +249,118 @@ export async function removeProjectMember(projectId, memberUid) {
   }
   unwrap({ data: null, error })
   return { memberUid }
+}
+
+/**
+ * Editable project details.
+ *
+ * Deliberately a NARROW whitelist. Three groups of columns are excluded, each
+ * for its own reason:
+ *
+ *   budget_total, start_date, expected_completion
+ *     Not descriptive — they are the inputs the project was BUILT from.
+ *     apply_project_templates() costed six escrow milestones and six cost
+ *     categories from the budget, and due-dated the milestones and the
+ *     eleven schedule phases across the dates, all at creation. Editing any
+ *     of them here would leave those figures derived from numbers that no
+ *     longer exist, which is worse than not editing them at all. Changing
+ *     them properly means deciding whether the templates recost, and that is
+ *     a separate piece of work.
+ *
+ *   manager_uid, customer_uid
+ *     Access control, not detail: manager_uid is what has_project_access()
+ *     and is_project_manager() read. Reassigning a project is a real action
+ *     with a real failure mode — handing it away and losing it in the same
+ *     statement — and does not belong behind a form labelled "edit details".
+ *
+ *   status, progress_pct
+ *     Already have their own controls on the card, which log their own
+ *     activity entries.
+ *
+ * Only columns that actually changed are written, so a dialog opened and
+ * saved untouched is a no-op rather than a write plus a misleading audit row.
+ */
+const EDITABLE = {
+  name: 'name',
+  client: 'client_name',
+  city: 'city',
+  plotAddress: 'plot_address',
+  plotLat: 'plot_lat',
+  plotLng: 'plot_lng',
+  plotFacing: 'plot_facing',
+  totalFloors: 'total_floors',
+  bhkPerFloor: 'bhk_per_floor',
+}
+
+/** Blank means "clear it", except for the name, which a project must have. */
+function cleaned(key, value) {
+  if (key === 'plotLat' || key === 'plotLng') {
+    const n = Number(value)
+    return value === '' || value === null || Number.isNaN(n) ? null : n
+  }
+  if (key === 'bhkPerFloor') {
+    const n = Number(value)
+    return Number.isFinite(n) && n >= 1 && n <= 4 ? Math.round(n) : null
+  }
+  const text = typeof value === 'string' ? value.trim() : value
+  return text === '' || text === undefined ? null : text
+}
+
+export async function updateProjectDetails(projectId, fields, actorUid) {
+  requireConfigured()
+
+  const name = fields.name?.trim()
+  if (!name) throw new Error('A project needs a name.')
+
+  /* Read first so only genuine changes are written, and so the audit entry
+     can name them. */
+  const current = unwrap(
+    await supabase
+      .from('projects')
+      .select(Object.values(EDITABLE).join(', '))
+      .eq('id', projectId)
+      .single(),
+  )
+
+  const patch = {}
+  const changed = []
+  for (const [key, column] of Object.entries(EDITABLE)) {
+    if (!(key in fields)) continue
+    const next = cleaned(key, fields[key])
+    /* Numerics come back as numbers, text as strings; compare loosely so a
+       lat re-typed identically does not read as a change. */
+    if (String(current[column] ?? '') === String(next ?? '')) continue
+    patch[column] = next
+    changed.push(column.replace(/_/g, ' '))
+  }
+
+  if (!changed.length) return null
+
+  const { data, error } = await supabase
+    .from('projects')
+    .update(patch)
+    .eq('id', projectId)
+    .select(PROJECT_SELECT)
+    .single()
+
+  if (error?.code === '42501') {
+    throw new Error('You do not have permission to edit this project.')
+  }
+  if (error?.code === '23514') {
+    throw new Error('One of those values is not allowed. Check facing, floors and BHK.')
+  }
+  const row = unwrap({ data, error })
+
+  await supabase.from('activity_log').insert({
+    project_id: projectId,
+    actor_uid: actorUid,
+    entity: 'project',
+    entity_id: projectId,
+    action: 'details_updated',
+    summary: `Details updated: ${changed.join(', ')}`,
+  })
+
+  return toProject(row)
 }
 
 /**
