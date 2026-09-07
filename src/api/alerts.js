@@ -88,6 +88,11 @@ function toAlert(row) {
     detected: row.detected_at,
     resolved: row.status === 'resolved',
     status: row.status,
+    /* Who is holding the rework — a contractor firm (PRD 5.2.4) or a person.
+       Null when the alert is not assigned. */
+    assignedTo:
+      row.contractors?.name ?? row.assignee?.full_name ?? null,
+    assignedIsContractor: Boolean(row.contractors?.name),
   }
 }
 
@@ -96,9 +101,12 @@ export async function listAlerts({ severity, status, page = 1 } = {}) {
 
   let query = supabase
     .from('ai_alerts')
-    .select('id, category, severity, confidence, location_text, detected_at, status, projects ( name )', {
-      count: 'exact',
-    })
+    .select(
+      'id, category, severity, confidence, location_text, detected_at, status, ' +
+        'projects ( name ), contractors ( name ), ' +
+        'assignee:profiles!ai_alerts_assigned_to_fkey ( full_name )',
+      { count: 'exact' },
+    )
 
   if (severity && severity !== 'All Levels') {
     query = query.eq('severity', severity)
@@ -208,13 +216,18 @@ export async function getAlertKpis() {
  * Goes through the `resolve_alert` function rather than a direct update so
  * the transition is logged and the resolved timestamp is stamped server-side.
  */
-export async function setAlertStatus(id, nextStatus, assignee = null) {
+export async function setAlertStatus(
+  id,
+  nextStatus,
+  { assignee = null, contractorId = null } = {},
+) {
   requireConfigured()
   const rows = unwrap(
     await supabase.rpc('resolve_alert', {
       p_alert_id: id,
       p_next_status: nextStatus,
       p_assignee: assignee,
+      p_contractor_id: contractorId,
     }),
   )
   return Array.isArray(rows) ? rows[0] : rows
@@ -223,19 +236,43 @@ export async function setAlertStatus(id, nextStatus, assignee = null) {
 export const acknowledgeAlert = (id) => setAlertStatus(id, 'acknowledged')
 export const resolveAlert = (id) => setAlertStatus(id, 'resolved')
 export const dismissAlert = (id) => setAlertStatus(id, 'false_positive')
-export const assignAlert = (id, uid) => setAlertStatus(id, 'assigned', uid)
+export const assignAlert = (id, uid) =>
+  setAlertStatus(id, 'assigned', { assignee: uid })
+
+/**
+ * PRD 5.2.4's middle outcome: "assigns to contractor for fix".
+ *
+ * A separate call from assignAlert because they name different things — a
+ * person who will chase it, or the firm that has to do the rework. The
+ * database refuses both at once.
+ */
+export const assignAlertToContractor = (id, contractorId) =>
+  setAlertStatus(id, 'assigned', { contractorId })
 
 /** The actions offered for a row, given where it currently is. */
+/**
+ * The actions offered for a row, given where it currently is.
+ *
+ * PRD 5.2.4 gives the PM three outcomes on a new alert — dismiss as a false
+ * positive, assign to a contractor for fix, or escalate. "Assign to
+ * contractor" opens a picker rather than acting immediately, which is what
+ * `needsContractor` marks.
+ */
 export function alertActionsFor(status) {
-  if (status === 'new') {
+  if (status === 'new' || status === 'acknowledged') {
     return [
-      { key: 'acknowledged', label: 'Acknowledge' },
+      ...(status === 'new'
+        ? [{ key: 'acknowledged', label: 'Acknowledge' }]
+        : []),
+      { key: 'assign_contractor', label: 'Assign to contractor', needsContractor: true },
       { key: 'assigned', label: 'Assign to me' },
+      { key: 'resolved', label: 'Mark resolved' },
       { key: 'false_positive', label: 'False positive' },
     ]
   }
-  if (status === 'acknowledged' || status === 'assigned') {
+  if (status === 'assigned') {
     return [
+      { key: 'assign_contractor', label: 'Reassign to contractor', needsContractor: true },
       { key: 'resolved', label: 'Mark resolved' },
       { key: 'false_positive', label: 'False positive' },
     ]

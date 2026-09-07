@@ -107,47 +107,6 @@ export async function listFeedCategories() {
   return ['All Activity', ...categories]
 }
 
-/** Posts a new update from the "New Site Update" dialog. */
-export async function createSiteUpdate({
-  projectId,
-  supervisorUid,
-  workCategory,
-  location,
-  notes,
-  status = 'in_progress',
-  milestoneId = null,
-  workersPresent = null,
-  materialsUsed = null,
-  clientToken = null,
-}) {
-  requireConfigured()
-
-  /* Upsert rather than insert, so a retry from the offline queue lands as a
-     no-op instead of a second copy of the same day's work. `ignoreDuplicates`
-     makes PostgREST return the existing row rather than a 409. */
-  return unwrap(
-    await supabase
-      .from('site_updates')
-      .upsert(
-        {
-          project_id: projectId,
-          supervisor_uid: supervisorUid,
-          work_category: workCategory,
-          location_on_site: location || null,
-          notes: notes || null,
-          status,
-          milestone_id: milestoneId || null,
-          /* PRD 5.2.5 optional metadata. */
-          workers_present: workersPresent ? Number(workersPresent) : null,
-          materials_used: materialsUsed?.trim() || null,
-          client_token: clientToken,
-        },
-        { onConflict: 'client_token', ignoreDuplicates: true },
-      )
-      .select('id'),
-  )
-}
-
 /**
  * Share of site updates by work category — the "Activity Breakdown" list.
  *
@@ -220,30 +179,20 @@ export async function listProjectOptions() {
   )
 }
 
-/** Work categories offered in the dialog, per PRD 8.3's examples. */
-export const WORK_CATEGORIES = [
-  'Slab Casting',
-  'MEP Installation',
-  'Structural Steel',
-  'Electrical',
-  'Brickwork',
-  'Plastering',
-  'Flooring',
-  'Painting',
-]
-
 /**
- * Milestones on a project, for PRD 8.3's optional "Milestone Reference" —
- * which milestone the day's work contributes to.
+ * NOT HERE: posting a site update, and the vocabularies that went with it.
+ *
+ * `createSiteUpdate`, `WORK_CATEGORIES` and `listMilestoneOptions` backed the
+ * "New Site Update" dialog on the Construction screen. Filing the daily update
+ * is the SITE SUPERVISOR's job — PRD 8.3 says each entry is "submitted by a
+ * site supervisor", 5.2.2 calls photo upload a "site supervisor interface",
+ * and 7.1 gives them an Android-only client. The project manager reads this
+ * feed and triages the alerts it produces (PRD 5.2.4).
+ *
+ * Not kept as a seam the way the design engine was: that engine is JavaScript
+ * the customer's React Native app can reuse, whereas the supervisor's client
+ * is a separate Android codebase and would not import this.
+ *
+ * The `site_updates` table itself is untouched — the database is shared by all
+ * three applications, and this app still reads the feed.
  */
-export async function listMilestoneOptions(projectId) {
-  requireConfigured()
-  if (!projectId) return []
-  return unwrap(
-    await supabase
-      .from('milestones')
-      .select('id, name, sequence')
-      .eq('project_id', projectId)
-      .order('sequence', { ascending: true }),
-  )
-}

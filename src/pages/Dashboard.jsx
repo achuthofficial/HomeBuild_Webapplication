@@ -17,6 +17,7 @@ import { cn } from '@/lib/cn'
 import { clockTime } from '@/lib/format'
 import { onImageError } from '@/lib/imageFallback'
 import { useAuth } from '@/context/AuthContext'
+import { useTranslation } from '@/context/LanguageContext'
 import { useQuery } from '@/hooks/useQuery'
 import {
   getDashboardKpis,
@@ -103,6 +104,7 @@ function buildKpis(k) {
 export default function Dashboard() {
   const navigate = useNavigate()
   const { user } = useAuth()
+  const { t } = useTranslation()
   /* AppLayout bumps this when Create New Project succeeds — from the topbar,
      reachable on every screen including this one, the app's landing page.
      Projects.jsx already keys its list on it; this screen never did, so a
@@ -118,8 +120,10 @@ export default function Dashboard() {
   return (
     <>
       <PageHeader
-        title="Executive Dashboard"
-        subtitle={`Welcome back, ${user?.firstName ?? 'there'}. Here is your portfolio status for today.`}
+        title={t('page.dashboard.title')}
+        subtitle={t('page.dashboard.subtitle', {
+          name: user?.firstName ?? 'there',
+        })}
       />
 
       {/* ---------------- KPI row ---------------- */}

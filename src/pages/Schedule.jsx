@@ -14,6 +14,7 @@ import GanttChart from '@/components/charts/GanttChart'
 import QueryBoundary, { Skeleton, RowSkeleton } from '@/components/ui/QueryBoundary'
 import { cn } from '@/lib/cn'
 import { useToast } from '@/context/ToastContext'
+import { useTranslation } from '@/context/LanguageContext'
 import { useQuery } from '@/hooks/useQuery'
 import { resolveProjectRef } from '@/api/finance'
 import {
@@ -130,6 +131,7 @@ function TaskBoard({ groups }) {
 
 export default function Schedule() {
   const { toast } = useToast()
+  const { t } = useTranslation()
   const [view, setView] = useState('Gantt')
   const [task, setTask] = useState(null)
   const [auditOpen, setAuditOpen] = useState(false)
@@ -264,15 +266,15 @@ export default function Schedule() {
     <>
       <PageHeader
         breadcrumbs={[
-          { label: 'Projects', to: '/projects' },
+          { label: t('nav.projects'), to: '/projects' },
           /* The loaded project, not a name baked into the breadcrumb. */
           {
             label: projectQuery.data?.name ?? 'Project',
             to: '/projects',
           },
-          { label: 'Schedule' },
+          { label: t('page.schedule.breadcrumb') },
         ]}
-        title="Master Construction Schedule"
+        title={t('page.schedule.title')}
         actions={
           <>
             {/* Hidden with one project — nothing to switch to. With several,

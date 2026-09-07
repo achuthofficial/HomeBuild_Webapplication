@@ -16,7 +16,10 @@ export default [
   { ignores: ['dist/**', 'node_modules/**', 'public/**'] },
   js.configs.recommended,
   {
-    files: ['**/*.{js,jsx,mjs}'],
+    /* .cjs is in here for the docs generators in scripts/, which are
+       CommonJS because package.json sets "type": "module". Without it
+       they parse without the Node globals and every `console` is an error. */
+    files: ['**/*.{js,jsx,mjs,cjs}'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',

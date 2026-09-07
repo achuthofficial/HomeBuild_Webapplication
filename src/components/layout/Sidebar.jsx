@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import Logo from './Logo'
 import { primaryNav, secondaryNav } from '@/data/navigation'
+import { useTranslation } from '@/context/LanguageContext'
 
 /**
  * Active state, per design_system.md section 3: a 2px green #10B981 bar on the
@@ -12,6 +13,7 @@ import { primaryNav, secondaryNav } from '@/data/navigation'
  */
 function NavItem({ item, onNavigate }) {
   const Icon = item.icon
+  const { t } = useTranslation()
 
   return (
     <NavLink
@@ -35,7 +37,7 @@ function NavItem({ item, onNavigate }) {
             className={cn('size-[18px] shrink-0', isActive && 'text-brand-ink')}
             strokeWidth={1.75}
           />
-          {item.label}
+          {t(item.labelKey)}
         </>
       )}
     </NavLink>
@@ -43,6 +45,8 @@ function NavItem({ item, onNavigate }) {
 }
 
 export default function Sidebar({ open, onClose }) {
+  const { t } = useTranslation()
+
   return (
     <>
       {/* Mobile scrim */}
@@ -69,20 +73,20 @@ export default function Sidebar({ open, onClose }) {
               HomeBuild
             </p>
             <p className="mt-1.5 text-[11px] text-ink-4">
-              Construction Management
+              {t('nav.tagline')}
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close navigation"
+            aria-label={t('nav.closeNavigation')}
             className="focus-ring -m-1 rounded p-1 text-ink-4 lg:hidden"
           >
             <X className="size-4" />
           </button>
         </div>
 
-        <nav className="scrollbar-slim flex-1 overflow-y-auto pr-3" aria-label="Primary">
+        <nav className="scrollbar-slim flex-1 overflow-y-auto pr-3" aria-label={t('nav.primary')}>
           <ul className="space-y-0.5">
             {primaryNav.map((item) => (
               <li key={item.to}>

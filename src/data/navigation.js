@@ -10,21 +10,27 @@ import {
   Settings,
 } from 'lucide-react'
 
-/** Primary sidebar navigation, in mockup order. */
+/**
+ * Primary sidebar navigation, in mockup order.
+ *
+ * `labelKey` rather than `label`: the sidebar renders it through `t()`, so
+ * the nav follows the language picked in Settings. The English text lives in
+ * src/i18n/strings.js with everything else.
+ */
 export const primaryNav = [
-  { label: 'Overview', to: '/dashboard', icon: LayoutGrid },
-  { label: 'Projects', to: '/projects', icon: Folder },
-  { label: 'Construction', to: '/construction', icon: HardHat },
-  { label: 'Finance', to: '/finance', icon: Wallet },
-  { label: 'Schedule', to: '/schedule', icon: CalendarDays },
-  { label: 'Contractors', to: '/contractors', icon: Users },
-  { label: 'Analytics', to: '/analytics', icon: BarChart3 },
+  { labelKey: 'nav.overview', to: '/dashboard', icon: LayoutGrid },
+  { labelKey: 'nav.projects', to: '/projects', icon: Folder },
+  { labelKey: 'nav.construction', to: '/construction', icon: HardHat },
+  { labelKey: 'nav.finance', to: '/finance', icon: Wallet },
+  { labelKey: 'nav.schedule', to: '/schedule', icon: CalendarDays },
+  { labelKey: 'nav.contractors', to: '/contractors', icon: Users },
+  { labelKey: 'nav.analytics', to: '/analytics', icon: BarChart3 },
 ]
 
 /** Pinned to the bottom of the sidebar above a hairline. */
 export const secondaryNav = [
-  { label: 'Support', to: '/support', icon: LifeBuoy },
-  { label: 'Settings', to: '/settings', icon: Settings },
+  { labelKey: 'nav.support', to: '/support', icon: LifeBuoy },
+  { labelKey: 'nav.settings', to: '/settings', icon: Settings },
 ]
 
 /**
@@ -32,14 +38,14 @@ export const secondaryNav = [
  * Construction and Finance ask about documents; Schedule, Contractors and
  * Analytics ask about tasks and people.
  */
-export const searchPlaceholders = {
-  '/dashboard': 'Search projects, documents, or alerts...',
-  '/projects': 'Search projects, documents, or alerts...',
-  '/construction': 'Search projects, documents, or alerts...',
-  '/finance': 'Search projects, documents, or alerts...',
-  '/schedule': 'Search tasks, milestones, or people...',
-  '/contractors': 'Search tasks, milestones, or people...',
-  '/analytics': 'Search tasks, milestones, or people...',
-  '/settings': 'Search projects, documents, or alerts...',
-  '/support': 'Search projects, documents, or alerts...',
+export const searchPlaceholderKeys = {
+  '/dashboard': 'topbar.searchDocuments',
+  '/projects': 'topbar.searchDocuments',
+  '/construction': 'topbar.searchDocuments',
+  '/finance': 'topbar.searchDocuments',
+  '/schedule': 'topbar.searchTasks',
+  '/contractors': 'topbar.searchTasks',
+  '/analytics': 'topbar.searchTasks',
+  '/settings': 'topbar.searchDocuments',
+  '/support': 'topbar.searchDocuments',
 }

@@ -108,7 +108,8 @@ drop function if exists public.is_project_manager(uuid)             cascade;
 drop function if exists public.is_signed_in()                       cascade;
 drop function if exists public.post_milestone_expense(uuid)         cascade;
 drop function if exists public.recalc_project_rollups(uuid)         cascade;
-drop function if exists public.resolve_alert(uuid, text, text)      cascade;
+drop function if exists public.resolve_alert(uuid, text, text)      cascade; -- pre-contractor
+drop function if exists public.resolve_alert(uuid, text, text, uuid) cascade;
 drop function if exists public.second_approve_milestone(uuid)       cascade;
 drop function if exists public.select_floor_plan(uuid)              cascade;
 drop function if exists public.trigger_recalc_rollups()             cascade;
